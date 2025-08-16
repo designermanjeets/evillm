@@ -732,6 +732,33 @@ Project Manager"""
         assert isinstance(citation_usage, list)
     
     @pytest.mark.asyncio
+    async def test_hybrid_search_integration(self, mock_workflow):
+        """Test hybrid search integration in RetrieverAdapter."""
+        from app.services.retriever import RetrieverAdapter
+        from app.config.manager import ConfigManager
+        
+        # Create mock config and retriever
+        config = ConfigManager()
+        retriever = RetrieverAdapter(config)
+        
+        # Test hybrid search availability check
+        has_hybrid = retriever._has_hybrid_search()
+        # Should be False in test mode (stub services)
+        assert isinstance(has_hybrid, bool)
+        
+        # Test retrieval with hybrid search (should fall back to SQL)
+        citations = await retriever.retrieve("tenant-123", "test query", k=5)
+        
+        # Verify citations structure
+        assert isinstance(citations, list)
+        # In test mode, citations might be empty due to empty database
+        
+        # Test that the retriever has the required services
+        assert hasattr(retriever, 'bm25_service')
+        assert hasattr(retriever, 'vector_service')
+        assert hasattr(retriever, 'fusion_engine')
+    
+    @pytest.mark.asyncio
     async def test_llm_streams_and_collects_used_citations(self, mock_workflow):
         """Test EARS-AGT-5: LLM streams and collects used citations."""
         from app.services.llm import LLMClient

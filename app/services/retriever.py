@@ -1,6 +1,7 @@
 """Hybrid retrieval service with fallback to SQL text search."""
 
 import asyncio
+import time
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import structlog
@@ -9,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.session import get_database_session
 from app.config.manager import ConfigManager
+from app.services.bm25_search import BM25SearchService
+from app.services.embeddings import VectorSearchService
+from app.services.fusion import ReciprocalRankFusion
 
 logger = structlog.get_logger(__name__)
 
@@ -33,6 +37,31 @@ class RetrieverAdapter:
         self.fallback_enabled = config.get("retriever.fallback_enabled", True)
         self.max_results = config.get("retriever.max_results", 10)
         
+        # Initialize search services
+        self.bm25_service = BM25SearchService(
+            host=config.get("search.bm25.host", "localhost"),
+            index_prefix=config.get("search.bm25.index_prefix", "emails")
+        )
+        self.vector_service = VectorSearchService(config)
+        self.fusion_engine = ReciprocalRankFusion(
+            k=config.get("search.fusion.k", 60),
+            weight_bm25=config.get("search.fusion.weight_bm25", 1.0),
+            weight_vector=config.get("search.fusion.weight_vector", 1.0)
+        )
+        
+        # Services will be initialized lazily on first use
+        self._services_initialized = False
+    
+    async def _ensure_services_initialized(self):
+        """Ensure search services are initialized."""
+        if not self._services_initialized:
+            try:
+                await self.bm25_service.initialize()
+                self._services_initialized = True
+                logger.info("Search services initialized")
+            except Exception as e:
+                logger.error("Failed to initialize search services", error=str(e))
+    
     async def retrieve(
         self, 
         tenant_id: str, 
@@ -40,8 +69,11 @@ class RetrieverAdapter:
         k: int = 10, 
         filters: Optional[Dict[str, Any]] = None
     ) -> List[CitationItem]:
-        """Retrieve top-k results with citations."""
+        """Retrieve top-k results with citations using hybrid search."""
         try:
+            # Ensure services are initialized
+            await self._ensure_services_initialized()
+            
             # Try hybrid search first if available
             if self._has_hybrid_search():
                 results = await self._hybrid_search(tenant_id, query, k, filters)
@@ -62,8 +94,8 @@ class RetrieverAdapter:
     
     def _has_hybrid_search(self) -> bool:
         """Check if hybrid search services are available."""
-        # TODO: Check if BM25/vector services are configured and healthy
-        return False
+        return (self.bm25_service.client is not None or 
+                self.vector_service._client["type"] != "stub")
     
     async def _hybrid_search(
         self, 
@@ -72,10 +104,157 @@ class RetrieverAdapter:
         k: int, 
         filters: Optional[Dict[str, Any]] = None
     ) -> List[CitationItem]:
-        """Perform hybrid search using BM25 + vector search."""
-        # TODO: Implement actual hybrid search
-        # For now, return empty to trigger fallback
-        return []
+        """Perform hybrid search using BM25 + vector search with performance tracking."""
+        start_time = time.time()
+        search_metrics = {
+            "bm25_results": 0,
+            "vector_results": 0,
+            "fused_results": 0,
+            "total_time_ms": 0
+        }
+        
+        try:
+            # Get BM25 results
+            bm25_results = []
+            bm25_start = time.time()
+            if self.bm25_service.client:
+                bm25_response = await self.bm25_service.search(
+                    tenant_id, query, filters, k * 2, 0
+                )
+                bm25_results = self._convert_bm25_results(bm25_response)
+                search_metrics["bm25_results"] = len(bm25_results)
+                logger.info("BM25 search completed", 
+                           tenant_id=tenant_id, 
+                           results=len(bm25_results),
+                           time_ms=round((time.time() - bm25_start) * 1000, 2))
+            
+            # Get vector search results
+            vector_results = []
+            vector_start = time.time()
+            if self.vector_service._client["type"] != "stub":
+                # Generate query embedding
+                embedding_provider = self._get_embedding_provider()
+                if embedding_provider:
+                    query_vector = await embedding_provider.embed_batch([query])
+                    if query_vector:
+                        vector_response = await self.vector_service.search_similar(
+                            tenant_id, query_vector[0], k * 2, 0.7
+                        )
+                        vector_results = self._convert_vector_results(vector_response)
+                        search_metrics["vector_results"] = len(vector_results)
+                        logger.info("Vector search completed", 
+                                   tenant_id=tenant_id, 
+                                   results=len(vector_results),
+                                   time_ms=round((time.time() - vector_start) * 1000, 2))
+            
+            # If we have both types of results, fuse them
+            if bm25_results and vector_results:
+                fusion_start = time.time()
+                fused_results = self.fusion_engine.fuse_results(bm25_results, vector_results)
+                search_metrics["fused_results"] = len(fused_results)
+                logger.info("Result fusion completed", 
+                           tenant_id=tenant_id, 
+                           fused_count=len(fused_results),
+                           time_ms=round((time.time() - fusion_start) * 1000, 2))
+                
+                final_results = self._convert_to_citations(fused_results[:k])
+            else:
+                # If we only have one type, return it
+                if bm25_results:
+                    final_results = self._convert_to_citations(bm25_results[:k])
+                elif vector_results:
+                    final_results = self._convert_to_citations(vector_results[:k])
+                else:
+                    final_results = []
+            
+            # Calculate total time
+            search_metrics["total_time_ms"] = round((time.time() - start_time) * 1000, 2)
+            
+            # Log search performance
+            logger.info("Hybrid search completed", 
+                       tenant_id=tenant_id,
+                       query=query[:100],
+                       k=k,
+                       final_results=len(final_results),
+                       metrics=search_metrics)
+            
+            return final_results
+            
+        except Exception as e:
+            search_metrics["total_time_ms"] = round((time.time() - start_time) * 1000, 2)
+            logger.error("Hybrid search failed", 
+                        error=str(e), 
+                        tenant_id=tenant_id,
+                        metrics=search_metrics)
+            return []
+    
+    def _get_embedding_provider(self):
+        """Get embedding provider for vector search."""
+        try:
+            from app.services.embeddings import OpenAIEmbeddingProvider
+            config = self.config
+            api_key = config.get("models.embeddings.openai.api_key", "")
+            return OpenAIEmbeddingProvider(api_key)
+        except Exception as e:
+            logger.warning("Failed to get embedding provider", error=str(e))
+            return None
+    
+    def _convert_bm25_results(self, bm25_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Convert BM25 search results to standard format."""
+        results = []
+        hits = bm25_response.get("hits", {}).get("hits", [])
+        
+        for hit in hits:
+            result = {
+                "id": hit.get("_id"),
+                "score": hit.get("_score", 0.0),
+                "source": "bm25",
+                "citations": {
+                    "chunk_id": hit.get("_source", {}).get("chunk_id"),
+                    "email_id": hit.get("_source", {}).get("email_id"),
+                    "content": hit.get("_source", {}).get("content", ""),
+                    "subject": hit.get("_source", {}).get("subject", ""),
+                    "created_at": hit.get("_source", {}).get("created_at"),
+                    "tenant_id": hit.get("_source", {}).get("tenant_id")
+                }
+            }
+            results.append(result)
+        
+        return results
+    
+    def _convert_vector_results(self, vector_response: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert vector search results to standard format."""
+        results = []
+        
+        for item in vector_response:
+            result = {
+                "id": item.get("id"),
+                "score": item.get("score", 0.0),
+                "citations": {
+                    "chunk_id": item.get("payload", {}).get("chunk_id"),
+                    "email_id": item.get("payload", {}).get("email_id"),
+                    "content": item.get("payload", {}).get("content", ""),
+                    "subject": ""  # Vector search doesn't have subject field
+                }
+            }
+            results.append(result)
+        
+        return results
+    
+    def _convert_to_citations(self, search_results: List[Dict[str, Any]]) -> List[CitationItem]:
+        """Convert search results to CitationItem objects."""
+        citations = []
+        
+        for result in search_results:
+            citations.append(CitationItem(
+                email_id=result["citations"]["email_id"],
+                chunk_uid=result["citations"]["chunk_id"],
+                object_key=f"search_result_{result['id']}",
+                score=result["score"],
+                content_preview=result["citations"]["content"][:200] + "..." if len(result["citations"]["content"]) > 200 else result["citations"]["content"]
+            ))
+        
+        return citations
     
     async def _sql_text_search(
         self, 

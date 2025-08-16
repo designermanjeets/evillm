@@ -334,6 +334,241 @@ class EmbeddingWorker:
             return retry_count
 
 
+class VectorSearchService:
+    """Vector search service with multiple backend support."""
+    
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.backend = config.get("vector_store.backend", "qdrant")
+        self.host = config.get("vector_store.host", "localhost")
+        self.port = config.get("vector_store.port", 6333)
+        self.collection_prefix = config.get("vector_store.collection_prefix", "emails")
+        
+        # Initialize backend-specific client
+        self._client = self._init_backend()
+    
+    def _init_backend(self):
+        """Initialize vector store backend."""
+        if self.backend == "qdrant":
+            return self._init_qdrant()
+        elif self.backend == "pinecone":
+            return self._init_pinecone()
+        else:
+            logger.warning(f"Unsupported vector backend: {self.backend}, using stub")
+            return self._init_stub()
+    
+    def _init_qdrant(self):
+        """Initialize Qdrant client."""
+        try:
+            from qdrant_client import AsyncQdrantClient
+            client = AsyncQdrantClient(host=self.host, port=self.port)
+            logger.info("Qdrant vector store initialized", host=self.host, port=self.port)
+            return {"type": "qdrant", "client": client}
+        except ImportError:
+            logger.warning("Qdrant client not available, using stub")
+            return self._init_stub()
+        except Exception as e:
+            logger.error("Failed to initialize Qdrant client", error=str(e))
+            return self._init_stub()
+    
+    def _init_pinecone(self):
+        """Initialize Pinecone client."""
+        try:
+            import pinecone
+            api_key = self.config.get("vector_store.pinecone.api_key")
+            environment = self.config.get("vector_store.pinecone.environment")
+            
+            if not api_key or not environment:
+                logger.warning("Pinecone credentials not configured, using stub")
+                return self._init_stub()
+            
+            pinecone.init(api_key=api_key, environment=environment)
+            index_name = self.config.get("vector_store.pinecone.index_name", "emails")
+            index = pinecone.Index(index_name)
+            
+            logger.info("Pinecone vector store initialized", index_name=index_name)
+            return {"type": "pinecone", "client": index}
+        except ImportError:
+            logger.warning("Pinecone client not available, using stub")
+            return self._init_stub()
+        except Exception as e:
+            logger.error("Failed to initialize Pinecone client", error=str(e))
+            return self._init_stub()
+    
+    def _init_stub(self):
+        """Initialize stub client for testing."""
+        logger.info("Using stub vector store")
+        return {"type": "stub", "client": None}
+    
+    def _get_collection_name(self, tenant_id: str) -> str:
+        """Generate tenant-scoped collection name."""
+        return f"{self.collection_prefix}_{tenant_id}"
+    
+    async def create_collection(self, tenant_id: str, vector_size: int = 1536) -> bool:
+        """Create vector collection for tenant."""
+        try:
+            if self._client["type"] == "qdrant":
+                collection_name = self._get_collection_name(tenant_id)
+                client = self._client["client"]
+                
+                # Check if collection exists
+                collections = await client.get_collections()
+                if collection_name not in [c.name for c in collections.collections]:
+                    await client.create_collection(
+                        collection_name=collection_name,
+                        vectors_config={
+                            "size": vector_size,
+                            "distance": "Cosine"
+                        }
+                    )
+                    logger.info("Created Qdrant collection", collection_name=collection_name)
+                
+                return True
+                
+            elif self._client["type"] == "pinecone":
+                # Pinecone collections are created at index level
+                return True
+                
+            else:
+                return True  # Stub always succeeds
+                
+        except Exception as e:
+            logger.error("Failed to create collection", error=str(e), tenant_id=tenant_id)
+            return False
+    
+    async def upsert_vectors(self, tenant_id: str, vectors: List[Dict[str, Any]]) -> bool:
+        """Upsert vectors to the vector store."""
+        try:
+            if self._client["type"] == "qdrant":
+                collection_name = self._get_collection_name(tenant_id)
+                client = self._client["client"]
+                
+                # Prepare points for Qdrant
+                points = []
+                for vector_data in vectors:
+                    point = {
+                        "id": vector_data["id"],
+                        "vector": vector_data["vector"],
+                        "payload": {
+                            "chunk_id": vector_data["chunk_id"],
+                            "email_id": vector_data["email_id"],
+                            "content": vector_data["content"],
+                            "tenant_id": tenant_id,
+                            "created_at": vector_data.get("created_at", datetime.now().isoformat())
+                        }
+                    }
+                    points.append(point)
+                
+                await client.upsert(collection_name=collection_name, points=points)
+                logger.info("Upserted vectors to Qdrant", 
+                           collection_name=collection_name, 
+                           count=len(vectors))
+                
+                return True
+                
+            elif self._client["type"] == "pinecone":
+                # Prepare vectors for Pinecone
+                ids = [str(v["id"]) for v in vectors]
+                vectors_list = [v["vector"] for v in vectors]
+                metadata = [
+                    {
+                        "chunk_id": v["chunk_id"],
+                        "email_id": v["email_id"],
+                        "content": v["content"],
+                        "tenant_id": tenant_id
+                    }
+                    for v in vectors
+                ]
+                
+                self._client["client"].upsert(vectors=zip(ids, vectors_list, metadata))
+                logger.info("Upserted vectors to Pinecone", count=len(vectors))
+                
+                return True
+                
+            else:
+                # Stub implementation
+                logger.info("Stub vector upsert", count=len(vectors))
+                return True
+                
+        except Exception as e:
+            logger.error("Failed to upsert vectors", error=str(e), tenant_id=tenant_id)
+            return False
+    
+    async def search_similar(self, tenant_id: str, query_vector: List[float], 
+                           limit: int = 10, score_threshold: float = 0.7) -> List[Dict[str, Any]]:
+        """Search for similar vectors."""
+        try:
+            if self._client["type"] == "qdrant":
+                collection_name = self._get_collection_name(tenant_id)
+                client = self._client["client"]
+                
+                # Perform similarity search
+                search_result = await client.search(
+                    collection_name=collection_name,
+                    query_vector=query_vector,
+                    limit=limit,
+                    score_threshold=score_threshold,
+                    with_payload=True
+                )
+                
+                # Convert to standard format
+                results = []
+                for point in search_result:
+                    results.append({
+                        "id": point.id,
+                        "score": point.score,
+                        "payload": point.payload
+                    })
+                
+                logger.info("Qdrant similarity search completed", 
+                           collection_name=collection_name,
+                           results_count=len(results))
+                
+                return results
+                
+            elif self._client["type"] == "pinecone":
+                # Perform similarity search with Pinecone
+                search_result = self._client["client"].query(
+                    vector=query_vector,
+                    top_k=limit,
+                    include_metadata=True,
+                    filter={"tenant_id": tenant_id}
+                )
+                
+                # Convert to standard format
+                results = []
+                for match in search_result.matches:
+                    if match.score >= score_threshold:
+                        results.append({
+                            "id": match.id,
+                            "score": match.score,
+                            "payload": match.metadata
+                        })
+                
+                logger.info("Pinecone similarity search completed", results_count=len(results))
+                return results
+                
+            else:
+                # Stub implementation
+                logger.info("Stub similarity search", limit=limit)
+                return [
+                    {
+                        "id": f"stub_{i}",
+                        "score": 0.9 - (i * 0.1),
+                        "payload": {
+                            "chunk_id": f"chunk_{i}",
+                            "email_id": f"email_{i}",
+                            "content": f"Stub content {i}"
+                        }
+                    }
+                    for i in range(min(limit, 5))
+                ]
+                
+        except Exception as e:
+            logger.error("Similarity search failed", error=str(e), tenant_id=tenant_id)
+            return []
+
+
 class EmbeddingMetrics:
     """Metrics collection for embedding operations."""
     
