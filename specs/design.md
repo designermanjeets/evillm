@@ -1360,3 +1360,192 @@ Source → MIME Parse → Normalize → Attachments/OCR → Dedup → Storage Wr
 - **Alert Thresholds**: Configurable alerts for performance degradation
 - **Dashboard Integration**: Prometheus metrics for Grafana dashboards
 - **Real-time Monitoring**: Live pipeline status and metrics
+
+## Workflow State & Patches
+
+### State Schema
+
+The OCR workflow uses a strongly-typed state object with immutable core fields and patchable processing fields:
+
+```python
+@dataclass
+class OCRWorkflowState:
+    # Immutable core fields (never change)
+    tenant_id: str
+    email_id: str
+    attachment: AttachmentInfo
+    workflow_id: str
+    
+    # Patchable processing fields
+    current_step: Optional[str] = None
+    error_message: Optional[str] = None
+    extracted_text: Optional[str] = None
+    extraction_metadata: Optional[Dict[str, Any]] = None
+    needs_ocr: bool = False
+    ocr_text: Optional[str] = None
+    ocr_confidence: float = 0.0
+    ocr_backend: Optional[str] = None
+    ocr_processing_time: float = 0.0
+    storage_key: Optional[str] = None
+    storage_path: Optional[str] = None
+    compliance_checks: List[str] = None
+    processing_metrics: Dict[str, Any] = None
+```
+
+### StatePatch Contract
+
+Sub-agents return `StatePatch` objects containing only the fields they modify:
+
+```python
+class StatePatch(TypedDict, total=False):
+    # All fields optional - only include what changes
+    current_step: Optional[str]
+    error_message: Optional[str]
+    extracted_text: Optional[str]
+    extraction_metadata: Optional[Dict[str, Any]]
+    needs_ocr: Optional[bool]
+    ocr_text: Optional[str]
+    ocr_confidence: Optional[float]
+    ocr_backend: Optional[str]
+    ocr_processing_time: Optional[float]
+    storage_key: Optional[str]
+    storage_path: Optional[str]
+    compliance_checks: Optional[List[str]]
+    processing_metrics: Optional[Dict[str, Any]]
+```
+
+### Patch Merge Rules
+
+The `merge_patch` function applies patches with deterministic precedence:
+
+```python
+def merge_patch(
+    state: OCRWorkflowState, 
+    patch: StatePatch, 
+    *, 
+    banned_keys: List[str] = ["tenant_id"],
+    conflict_policy: str = "error"
+) -> OCRWorkflowState:
+    """
+    Merge patch into state with validation and conflict detection.
+    
+    Rules:
+    1. Latest-wins: later patches override earlier ones
+    2. Banned keys: tenant_id cannot be modified
+    3. Conflict detection: detect when multiple patches modify same key
+    4. Type safety: ensure patch values match expected types
+    """
+```
+
+**Merge Behavior:**
+- **Latest-wins**: Patches applied later take precedence
+- **Banned keys**: `tenant_id` is immutable and cannot be modified
+- **Conflict detection**: When multiple patches modify the same key in a single step, policy determines behavior
+- **Type validation**: Patch values must match expected types from state schema
+
+### Node Contract
+
+All sub-agents follow a strict contract:
+
+```python
+@returns_patch(node_name="attachment_miner")
+async def process(self, state: OCRWorkflowState) -> StatePatch:
+    """
+    Sub-agent contract:
+    - Input: current state (read-only)
+    - Output: StatePatch with only changed fields
+    - Never return whole state objects
+    - Never modify input state
+    - Always return dict with patch fields
+    """
+    # Process state and return only changes
+    return {
+        "current_step": "attachment_validated",
+        "processing_metrics": {"validation_time": time.time()}
+    }
+```
+
+### State Reconstruction
+
+At workflow completion, accumulated patches are folded into the final typed state:
+
+```python
+def reconstruct_final_state(
+    initial_state: OCRWorkflowState,
+    patches: List[StatePatch]
+) -> OCRWorkflowState:
+    """
+    Reconstruct final state from initial state and accumulated patches.
+    
+    Process:
+    1. Start with initial state
+    2. Apply each patch in sequence (latest wins)
+    3. Validate final state against schema
+    4. Return typed OCRWorkflowState object
+    """
+```
+
+### Configuration
+
+Workflow behavior is controlled via configuration:
+
+```yaml
+graph:
+  linear_mode: true                    # Default: linear execution
+  conflict_policy: "error"            # "error" | "warn" | "ignore"
+  guard_banned_keys: ["tenant_id"]    # Keys that cannot be modified
+  observability:
+    log_patches: false                 # Log patch contents (PII risk)
+    metrics: true                      # Enable metrics collection
+    trace_id: true                     # Include trace_id in logs
+```
+
+**Routing Modes:**
+- **Linear mode (default)**: All nodes execute in sequence, no branching
+- **Conditional mode**: Conditional edges enabled with mutually exclusive routing
+
+**Conflict Policies:**
+- **Error**: Raise exception on duplicate key modifications
+- **Warn**: Log warning but continue processing
+- **Ignore**: Silently accept latest value
+
+### Observability
+
+Each node emits structured metrics and logs:
+
+```python
+# Metrics per node
+graph.patch_size: int          # Number of fields in patch
+graph.keys_changed: int        # Fields modified
+graph.conflicts: int           # Conflicts detected
+graph.node_latency_ms: float  # Processing time
+graph.policy_violations: int  # Banned key attempts
+
+# Structured logs
+{
+    "trace_id": "uuid",
+    "node": "attachment_miner",
+    "keys_changed": ["current_step", "processing_metrics"],
+    "patch_size": 2,
+    "latency_ms": 45.2,
+    "level": "info"
+}
+```
+
+### Security & Tenancy
+
+**Tenant ID Immutability:**
+- `tenant_id` is marked as banned in patch validation
+- Attempts to modify trigger policy violations
+- Violations are logged and metered
+- Workflow continues with original tenant_id
+
+**PII Protection:**
+- Patch values are redacted in logs by default
+- Sensitive fields can be marked for redaction
+- Audit trail maintained for policy violations
+
+**Multi-tenant Isolation:**
+- All patches maintain tenant context
+- No cross-tenant data leakage possible
+- Tenant boundaries enforced at patch level

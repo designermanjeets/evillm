@@ -15,6 +15,9 @@ class AppConfig(BaseModel):
     # App metadata
     app: Dict[str, Any] = {}
     
+    # Graph configuration
+    graph: Dict[str, Any] = {}
+    
     # OCR configuration
     ocr: Optional[OCRSettings] = None
     
@@ -232,3 +235,13 @@ def get_database_config() -> Dict[str, Any]:
 def get_feature_flag(flag_name: str) -> bool:
     """Get feature flag value."""
     return get_config_manager().get_feature_flag(flag_name)
+
+
+def get_graph_config() -> Dict[str, Any]:
+    """Get graph configuration."""
+    return get_config_manager().load_config().graph
+
+
+def get_config() -> Dict[str, Any]:
+    """Get full configuration as dictionary."""
+    return get_config_manager().load_config().model_dump()

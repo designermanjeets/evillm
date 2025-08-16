@@ -98,533 +98,68 @@ The Logistics Email AI system processes incoming logistics emails to provide int
 - And: Prompt injection is prevented
 
 ### EARS-10: Attachment Processing
-**WHEN** attachments are present in emails, **THE SYSTEM SHALL** extract text content and create OCR tasks for images **WITH** proper mimetype validation and size limits.
+**WHEN** email attachments are processed, **THE SYSTEM SHALL** extract text and metadata **WITH** OCR support for images and compliance validation.
 
 **Acceptance Criteria:**
-- Given: An email with attachments arrives
-- When: The attachment is processed
-- Then: Text-based attachments (DOCX, PDF) have content extracted
-- And: Image attachments trigger OCR task creation
-- And: Attachment metadata is stored with content hashes
-- And: Size and mimetype limits are enforced
+- Given: An email with attachments is processed
+- When: The attachment is analyzed
+- Then: Text is extracted using native methods or OCR
+- And: Metadata is captured (size, type, hash)
+- And: Compliance checks are performed
+- And: Results are stored with proper indexing
 
-### EARS-ING-1: MIME Parsing & Checkpoints
-**WHEN** a batch of emails is ingested, **THE SYSTEM SHALL** parse MIME and extract headers/parts **WITH** idempotent checkpoints and resumable progress.
-
-**Acceptance Criteria:**
-- Given: A batch of emails is submitted for ingestion
-- When: MIME parsing occurs
-- Then: Headers (Message-Id, In-Reply-To, References) are extracted
-- And: Email parts are identified and separated
-- And: Checkpoints are created for resumable processing
-- And: Processing can resume from last successful point
-
-### EARS-ING-2: Content Normalization
-**WHEN** normalization runs, **THE SYSTEM SHALL** convert HTML to clean text, strip signatures/quoted text, and detect language **WITH** a normalization manifest per email.
+### EARS-GRAPH-1: Patch-Only State Updates
+**WHEN** sub-agents update workflow state, **THE SYSTEM SHALL** apply **patch-only** updates (immutable), **WITH** validation that no duplicate/conflicting keys are produced in a single tick.
 
 **Acceptance Criteria:**
-- Given: Raw email content is available (bytes or str)
-- When: Normalization is performed
-- Then: HTML is converted to clean, readable text
-- And: Email signatures are stripped
-- And: Quoted text is identified and marked
-- And: Language is detected with confidence scores
-- And: Normalization manifest records all transformations
-- And: Input content is safely handled whether bytes or str
-- And: Normalized text is stable for hashing and chunking
+- Given: A sub-agent processes workflow state
+- When: The agent returns state updates
+- Then: Only changed fields are returned as patches
+- And: No duplicate keys are allowed in a single update
+- And: Attempts to return whole state objects are rejected
+- And: Patch validation prevents conflicting updates
 
-### EARS-ING-3: Attachment Processing
-**WHEN** attachments are present, **THE SYSTEM SHALL** extract text (DOCX/PDF first) and create OCR tasks for images/PDFs **WITH** allowed mimetypes only.
+### EARS-GRAPH-2: Deterministic State Reconstruction
+**WHEN** the workflow completes, **THE SYSTEM SHALL** reconstruct a typed final state from accumulated patches **WITH** deterministic field precedence (latest-wins) and tenant_id immutability.
 
 **Acceptance Criteria:**
-- Given: An email contains attachments
-- When: Attachment processing occurs
-- Then: DOCX and PDF text is extracted
-- And: OCR tasks are created for images and PDFs without text layers
-- And: Only allowed mimetypes are processed
-- And: Attachment metadata includes content hashes and sizes
+- Given: A workflow completes with multiple patches
+- When: Final state is reconstructed
+- Then: All patches are merged with latest-wins precedence
+- And: Final state is a typed OCRWorkflowState object
+- And: tenant_id remains unchanged from initial value
+- And: Reconstruction is deterministic and repeatable
 
-### EARS-ING-4: Storage Persistence
-**WHEN** storing content, **THE SYSTEM SHALL** write raw/normalized/attachment objects to storage **WITH** deterministic paths and content hashes; DB rows MUST reference object keys.
-
-**Acceptance Criteria:**
-- Given: Processed email content is ready
-- When: Storage operations occur
-- Then: Raw emails are stored with deterministic paths (raw_object_key)
-- And: Normalized text is stored separately (norm_object_key)
-- And: Attachments are stored with proper metadata (attachment.object_key)
-- And: OCR text is stored when available (ocr_text_object_key)
-- And: Database rows reference storage object keys for all content types
-- And: Content hashes are computed and stored for deduplication
-- And: All storage paths are tenant-aware and deterministic
-- And: Mimetype allowlist is enforced for security
-
-### EARS-ING-5: Deduplication
-**WHEN** duplicates are detected (exact hash or near-dup simhash/minhash), **THE SYSTEM SHALL** skip redundant uploads and mark dedup lineage **WITH** a per-batch dedup ratio metric.
+### EARS-GRAPH-3: Config-Driven Routing
+**THE SYSTEM SHALL** expose a config flag `graph.linear_mode` default true; conditional edges enabled only when `graph.linear_mode=false`.
 
 **Acceptance Criteria:**
-- Given: Multiple emails may contain duplicate content
-- When: Deduplication runs
-- Then: Exact duplicates (SHA-256) are skipped (no storage upload, no DB row)
-- And: Near-duplicates (simhash/minhash ≥ 0.8 threshold) are linked to canonical email_id
-- And: Dedup lineage is recorded with reference_count and first_seen_at
-- And: Per-batch dedup ratio is computed and exposed (exact + near duplicates / total)
-- And: Storage and processing costs are minimized
-- And: Metrics track dedup_exact, dedup_near, and overall dedup_ratio
-- And: Original content hash is preserved for future dedup decisions
-- And: Batch summary shows docs_total, dedup_exact, dedup_near, and dedup_ratio
-- And: Dedup lineage references are persisted to database for audit and analysis
+- Given: Workflow routing configuration
+- When: linear_mode is true (default)
+- Then: All nodes execute in linear sequence
+- And: No conditional branching occurs
+- When: linear_mode is false
+- Then: Conditional edges are enabled
+- And: Mutually exclusive routing prevents simultaneous execution
 
-### EARS-ING-6: Semantic Chunking
-**WHEN** chunking text, **THE SYSTEM SHALL** create semantic chunks **WITH** stable chunk_uids, token_count, and email/attachment mapping; vectors are created later by a separate job.
+### EARS-GRAPH-4: Per-Node Observability
+**THE SYSTEM SHALL** emit per-node metrics: patch_size, keys_changed, conflicts_detected, latency; logs **SHALL** include `trace_id` and sub-agent name.
 
 **Acceptance Criteria:**
-- Given: Normalized email text is available
-- When: Chunking is performed
-- Then: Semantic chunks are created with configurable window/overlap
-- And: Stable chunk_uids are generated deterministically
-- And: Token counts are estimated
-- And: Chunks are mapped to source emails and attachments
-- And: Embedding jobs are queued for later processing
+- Given: A sub-agent executes
+- When: The agent completes processing
+- Then: Metrics are recorded (patch_size, keys_changed, conflicts, latency)
+- And: Logs include trace_id and agent name
+- And: PII is redacted from log values
+- And: Metrics are available for monitoring dashboards
 
-### EARS-ING-7: Email Threading
-**WHEN** threading is derivable, **THE SYSTEM SHALL** link emails to threads via Message-Id/In-Reply-To/References **WITH** tenant-safe lookups.
-
-**Acceptance Criteria:**
-- Given: Email headers contain threading information
-- When: Threading analysis occurs
-- Then: Emails are linked to threads via Message-Id
-- And: Reply chains are identified via In-Reply-To/References
-- And: Thread metadata is stored
-- And: All lookups are tenant-scoped
-- And: Fallback threading uses subject normalization
-
-### EARS-ING-8: Error Handling & Retry
-**WHEN** errors occur, **THE SYSTEM SHALL** retry transient failures with exponential backoff; permanent failures SHALL be quarantined **WITH** audit records.
+### EARS-GRAPH-5: Tenant ID Immutability
+**THE SYSTEM SHALL** ensure `tenant_id` is constant; attempts to modify **SHALL** fail with a policy error.
 
 **Acceptance Criteria:**
-- Given: Processing errors occur during ingestion
-- When: Error handling is triggered
-- Then: Transient failures are retried with exponential backoff
-- And: Permanent failures are quarantined
-- And: Audit records are created for all failures
-- And: Processing continues for other emails in batch
-- And: Error metrics are collected and exposed
-
-### EARS-ING-9: Metrics & Observability
-**WHEN** ingestion completes, **THE SYSTEM SHALL** emit metrics (docs/sec, dedup_ratio, ocr_rate, failure_buckets, lag) **WITH** trace_id propagation.
-
-**Acceptance Criteria:**
-- Given: Ingestion batch processing completes
-- When: Metrics are collected
-- Then: Processing rate (docs/sec) is measured
-- And: Deduplication ratio is computed
-- And: OCR task creation rate is tracked
-- And: Failure buckets categorize error types
-- And: Processing lag is measured
-- And: Trace IDs propagate through all operations
-
-### EARS-ING-10: Multi-Tenant Isolation
-**WHEN** multi-tenant ingestion runs, **THE SYSTEM SHALL** enforce tenant_id at all stages **WITH** no cross-tenant keys/queries.
-
-**Acceptance Criteria:**
-- Given: Multiple tenants are processing emails
-- When: Ingestion operations occur
-- Then: All storage paths include tenant_id prefix
-- And: All database queries filter by tenant_id
-- And: No cross-tenant data is accessible
-- And: Tenant isolation is enforced at all pipeline stages
-- And: Storage and database operations are tenant-scoped
-**WHEN** emails contain attachments, **THE SYSTEM SHALL** extract and process attachments **WITH** OCR for text extraction where needed.
-
-**Acceptance Criteria:**
-- Given: An email contains attachments
-- When: The email is processed
-- Then: Attachments are extracted and stored
-- And: OCR is applied to image/PDF attachments
-- And: Text content is indexed for search
-- And: Attachments are accessible via secure URLs
-
-### EARS-11: LangGraph Agent Coordination
-**WHEN** a complex request is processed, **THE SYSTEM SHALL** coordinate multiple specialized agents **WITH** token and time budget enforcement.
-
-**Acceptance Criteria:**
-- Given: A complex request requiring multiple steps
-- When: The request is processed
-- Then: Coordinator agent plans and orchestrates steps
-- And: Token and time budgets are enforced
-- And: Human approval gate is available for low-confidence responses
-- And: Agent transitions are deterministic
-
-### EARS-12: Evaluation & Quality Gates
-**WHEN** responses are generated, **THE SYSTEM SHALL** evaluate quality using automated metrics **WITH** blocking gates for low-quality outputs.
-
-**Acceptance Criteria:**
-- Given: A response is generated
-- When: Quality evaluation is performed
-- Then: Grounding, completeness, tone, and policy scores are computed
-- And: Responses below threshold are blocked
-- And: Evaluation results are logged and tracked
-- And: Golden examples are used for calibration
-
-### EARS-DB-1: Database Connectivity & Health
-**WHEN** the system starts up or health checks are performed, **THE SYSTEM SHALL** verify database connectivity and migration status **WITH** health endpoint failure if database is unreachable or migrations are pending.
-
-**Acceptance Criteria:**
-- Given: System performs health check
-- When: Database is unreachable or migrations pending
-- Then: Health endpoint returns non-OK status
-- And: Current Alembic revision is exposed via health endpoint
-
-### EARS-DB-2: Email Metadata Persistence
-**WHEN** emails are processed, **THE SYSTEM SHALL** persist email metadata with object storage keys **WITH** tenant isolation and referential integrity.
-
-**Acceptance Criteria:**
-- Given: Email is processed through ingestion pipeline
-- When: Email metadata is stored
-- Then: All email fields are persisted with proper tenant_id
-- And: Object storage keys are stored for raw and normalized content
-- And: Thread relationships are maintained
-
-### EARS-DB-3: Semantic Chunk Storage
-**WHEN** email content is chunked for search, **THE SYSTEM SHALL** store semantic chunks with stable chunk_uid **WITH** token counts and metadata preservation.
-
-**Acceptance Criteria:**
-- Given: Email content is processed for chunking
-- When: Chunks are created
-- Then: Each chunk has a stable, unique chunk_uid
-- And: Token counts are accurately calculated and stored
-- And: Chunks maintain email and attachment relationships
-
-### EARS-DB-4: Multi-Tenant Isolation
-**WHEN** any database operation is performed, **THE SYSTEM SHALL** enforce tenant_id isolation **WITH** no cross-tenant data access or joins.
-
-**Acceptance Criteria:**
-- Given: Database query is executed
-- When: Query involves tenant-specific data
-- Then: tenant_id filter is automatically applied
-- And: No cross-tenant joins are possible
-- And: All tables enforce tenant_id NOT NULL constraint
-
-### EARS-DB-5: Performance Optimization
-**WHEN** database queries are executed under load, **THE SYSTEM SHALL** maintain performance within SLOs **WITH** appropriate indexes and query optimization.
-
-**Acceptance Criteria:**
-- Given: System is under load (≥50 concurrent requests)
-- When: Database queries are executed
-- Then: Query p95 response time ≤4s
-- And: Appropriate indexes exist for common query patterns
-- And: Tenant filtering is optimized
-
-### EARS-DB-6: Migration Management
-**WHEN** database schema changes are required, **THE SYSTEM SHALL** provide idempotent Alembic migrations **WITH** rollback capability and version tracking.
-
-**Acceptance Criteria:**
-- Given: Database schema needs to be updated
-- When: Migration is executed
-- Then: Migration is idempotent and safe to re-run
-- And: Rollback path is available
-- And: Current version is tracked and exposed
-
-### EARS-STO-1: Raw Email Storage
-**WHEN** an email is ingested, **THE SYSTEM SHALL** store the raw MIME message in object storage **WITH** deterministic pathing and SHA-256 content hash metadata.
-
-**Acceptance Criteria:**
-- Given: Email is ingested through the pipeline
-- When: Raw MIME message is processed
-- Then: Raw content is stored with deterministic path structure
-- And: SHA-256 content hash is calculated and stored as metadata
-- And: Object key is stored in database for future retrieval
-
-### EARS-STO-2: Normalized Text Storage
-**WHEN** normalization completes, **THE SYSTEM SHALL** store normalized text separately **WITH** linkage to the email row (object_key fields).
-
-**Acceptance Criteria:**
-- Given: Email content normalization is completed
-- When: Normalized text is generated
-- Then: Normalized text is stored separately from raw content
-- And: Object key is linked to email database record
-- And: Content hash is updated for normalized version
-
-### EARS-STO-3: Attachment Storage
-**WHEN** attachments exist, **THE SYSTEM SHALL** store each attachment (and OCR text if present) **WITH** signed-URL retrieval capability and allowed mimetypes only.
-
-**Acceptance Criteria:**
-- Given: Email contains attachments
-- When: Attachments are processed
-- Then: Each attachment is stored with proper mimetype validation
-- And: OCR text is stored separately if applicable
-- And: Signed URLs are generated for secure retrieval
-- And: Only allowed mimetypes are accepted
-
-### EARS-STO-4: Tenant Isolation
-**WHEN** storing objects, **THE SYSTEM SHALL** enforce tenant isolation via path prefixes **WITH** deny-by-default bucket policy and server-side encryption configured.
-
-**Acceptance Criteria:**
-- Given: Object storage operation is performed
-- When: Object is stored
-- Then: Tenant isolation is enforced via path prefixes
-- And: Bucket policy denies access by default
-- And: Server-side encryption is enabled
-- And: No cross-tenant data access is possible
-
-### EARS-STO-5: Deduplication
-**WHEN** duplicate content is detected (same content hash), **THE SYSTEM SHALL** avoid redundant uploads **WITH** reference counting or pointer reuse.
-
-**Acceptance Criteria:**
-- Given: Content with identical hash is detected
-- When: Storage operation is attempted
-- Then: Redundant upload is avoided
-- And: Reference counting is maintained
-- And: Storage efficiency is optimized
-
-### EARS-STO-6: Retry Logic
-**WHEN** transient failures occur, **THE SYSTEM SHALL** retry with exponential backoff **WITH** bounded attempts and idempotent keys.
-
-**Acceptance Criteria:**
-- Given: Transient storage failure occurs
-- When: Retry is attempted
-- Then: Exponential backoff is applied
-- And: Attempts are bounded to prevent infinite loops
-- And: Idempotent keys ensure no duplicate operations
-
-### EARS-STO-7: Multipart Upload
-**WHEN** large objects (>5MB) are uploaded, **THE SYSTEM SHALL** use multipart upload **WITH** integrity verification.
-
-**Acceptance Criteria:**
-- Given: Large object (>5MB) needs to be uploaded
-- When: Upload is initiated
-- Then: Multipart upload is used
-- And: Integrity is verified through checksums
-- And: Upload can be resumed if interrupted
-
-### EARS-STO-8: Presigned URLs
-**WHEN** queried by API, **THE SYSTEM SHALL** generate presigned URLs **WITH** configurable TTL and audit logging.
-
-**Acceptance Criteria:**
-- Given: API request for object access
-- When: Presigned URL is generated
-- Then: URL has configurable TTL
-- And: Access is logged for audit purposes
-- And: URL provides secure, time-limited access
-
-### EARS-ING-1: Batch Email Ingestion
-**WHEN** a batch of emails is ingested, **THE SYSTEM SHALL** parse MIME and extract headers/parts **WITH** idempotent checkpoints and resumable progress.
-
-**Acceptance Criteria:**
-- Given: A batch of emails is submitted for ingestion
-- When: The ingestion pipeline processes the batch
-- Then: MIME parsing extracts headers and message parts
-- And: Idempotent checkpoints are created for resumable progress
-- And: Progress can be resumed from any checkpoint
-
-### EARS-ING-2: Content Normalization
-**WHEN** normalization runs, **THE SYSTEM SHALL** convert HTML to clean text, strip signatures/quoted text, and detect language **WITH** a normalization manifest per email.
-
-**Acceptance Criteria:**
-- Given: Raw email content is processed
-- When: Normalization is applied
-- Then: HTML is converted to clean, readable text
-- And: Signatures and quoted text are stripped
-- And: Language is detected and recorded
-- And: Normalization manifest is created per email
-
-### EARS-ING-3: Attachment Processing
-**WHEN** attachments are present, **THE SYSTEM SHALL** extract text (DOCX/PDF first) and create OCR tasks for images/PDFs **WITH** allowed mimetypes only.
-
-**Acceptance Criteria:**
-- Given: Email contains attachments
-- When: Attachments are processed
-- Then: Text is extracted from DOCX/PDF documents
-- And: OCR tasks are created for images and PDFs without text layers
-- And: Only allowed mimetypes are processed
-- And: Attachment metadata is preserved
-
-### EARS-ING-4: Storage Integration
-**WHEN** storing content, **THE SYSTEM SHALL** write raw/normalized/attachment objects to storage **WITH** deterministic paths and content hashes; DB rows MUST reference object keys.
-
-**Acceptance Criteria:**
-- Given: Processed email content is ready for storage
-- When: Content is stored
-- Then: Raw, normalized, and attachment objects are written to storage
-- And: Deterministic paths and content hashes are used
-- And: Database rows reference storage object keys
-- And: All storage operations are tenant-isolated
-- And: Object keys are persisted to Email.raw_object_key, Email.norm_object_key, Attachment.object_key, and Attachment.ocr_text_object_key fields
-- And: Storage writes occur before database persistence to ensure consistency
-
-### EARS-ING-5: Deduplication
-**WHEN** duplicates are detected (exact hash or near-dup simhash/minhash), **THE SYSTEM SHALL** skip redundant uploads and mark dedup lineage **WITH** a per-batch dedup ratio metric.
-
-**Acceptance Criteria:**
-- Given: Email content is processed for storage
-- When: Duplicates are detected
-- Then: Redundant uploads are skipped
-- And: Deduplication lineage is recorded
-- And: Per-batch dedup ratio is computed and exposed
-- And: Storage efficiency is optimized
-
-### EARS-ING-6: Semantic Chunking
-**WHEN** chunking text, **THE SYSTEM SHALL** create semantic chunks **WITH** stable chunk_uids, token_count, and email/attachment mapping; vectors are created later by a separate job.
-
-**Acceptance Criteria:**
-- Given: Normalized email text is ready for chunking
-- When: Text is chunked
-- Then: Semantic chunks are created with stable chunk_uids
-- And: Token counts are accurately calculated
-- And: Chunks maintain email and attachment relationships
-- And: Embedding jobs are enqueued for later processing
-
-### EARS-ING-7: Thread Linkage
-**WHEN** threading is derivable, **THE SYSTEM SHALL** link emails to threads via Message-Id/In-Reply-To/References **WITH** tenant-safe lookups.
-
-**Acceptance Criteria:**
-- Given: Email headers contain threading information
-- When: Threading analysis is performed
-- Then: Emails are linked to appropriate threads
-- And: Thread relationships are preserved in the database
-- And: All lookups are tenant-safe
-- And: Fallback mechanisms handle missing headers
-
-### EARS-ING-8: Error Handling
-**WHEN** errors occur, **THE SYSTEM SHALL** retry transient failures with exponential backoff; permanent failures SHALL be quarantined **WITH** audit records.
-
-**Acceptance Criteria:**
-- Given: An error occurs during processing
-- When: Error handling is triggered
-- Then: Transient failures are retried with exponential backoff
-- And: Permanent failures are quarantined
-- And: Audit records are created for all failures
-- And: Processing can continue for other emails
-
-### EARS-ING-9: Metrics and Observability
-**WHEN** ingestion completes, **THE SYSTEM SHALL** emit metrics (docs/sec, dedup_ratio, ocr_rate, failure_buckets, lag) **WITH** trace_id propagation.
-
-**Acceptance Criteria:**
-- Given: Email ingestion batch completes
-- When: Metrics are collected
-- Then: Performance metrics are emitted (docs/sec, dedup_ratio, ocr_rate)
-- And: Failure metrics are categorized into buckets
-- And: Processing lag is measured and reported
-- And: Trace IDs propagate through the entire pipeline
-
-### EARS-ING-10: Multi-Tenant Isolation
-**WHEN** multi-tenant ingestion runs, **THE SYSTEM SHALL** enforce tenant_id at all stages **WITH** no cross-tenant keys/queries.
-
-**Acceptance Criteria:**
-- Given: Multiple tenants are ingesting emails
-- When: Ingestion processing occurs
-- Then: Tenant isolation is enforced at all stages
-- And: No cross-tenant data access occurs
-- And: All storage paths and database queries are tenant-scoped
-- And: Security boundaries are maintained
-
-### EARS-OCR-1: OCR Text Extraction
-**WHEN** an attachment lacks extractable text, **THE SYSTEM SHALL** attempt OCR **WITH** a configurable timeout and retry policy.
-
-**Acceptance Criteria:**
-- Given: An attachment without native text content
-- When: OCR processing is triggered
-- Then: OCR is attempted with configurable timeout
-- And: Retry policy is applied with exponential backoff
-- And: Processing continues within configured limits
-- And: OCR tasks are queued and processed asynchronously
-
-### EARS-OCR-2: OCR Text Storage
-**WHEN** OCR succeeds, **THE SYSTEM SHALL** store OCR text in object storage **WITH** an `ocr_text_object_key` persisted on the attachment row.
-
-**Acceptance Criteria:**
-- Given: OCR processing completes successfully
-- When: OCR text is generated
-- Then: OCR text is stored in object storage
-- And: `ocr_text_object_key` is persisted to Attachment.ocr_text_object_key
-- And: Storage path follows tenant-aware naming convention
-- And: Content hash is calculated for deduplication
-
-### EARS-OCR-3: OCR Failure Handling
-**WHEN** OCR fails after max retries, **THE SYSTEM SHALL** quarantine the item **WITH** a reason code and continue the batch.
-
-**Acceptance Criteria:**
-- Given: OCR processing fails after maximum retries
-- When: Failure is detected
-- Then: Attachment is quarantined with failure reason
-- And: Batch processing continues for other items
-- And: Failure metrics are recorded and exposed
-- And: Audit trail is maintained for failed OCR attempts
-
-### EARS-OCR-4: Attachment Security
-**THE SYSTEM SHALL** enforce an attachment mimetype allowlist and size caps **WITH** rejection metrics recorded.
-
-**Acceptance Criteria:**
-- Given: An attachment is submitted for processing
-- When: Security validation occurs
-- Then: Only allowed mimetypes are processed
-- And: Size limits are enforced per file type
-- And: Rejection metrics are recorded and exposed
-- And: Security violations are logged and quarantined
-
-### EARS-OCR-5: OCR Backend Support
-**THE SYSTEM SHALL** support multiple OCR backends behind a stable interface **WITH** a default local backend (stub or Tesseract) for dev.
-
-**Acceptance Criteria:**
-- Given: Multiple OCR backends are available
-- When: OCR processing is requested
-- Then: Backend selection is configurable
-- And: Local backend (stub/Tesseract) is available for development
-- And: Cloud backends can be integrated via plugin interface
-- And: Backend switching is transparent to calling code
-
-### EARS-OCR-6: Image Preprocessing
-**THE SYSTEM SHALL** preprocess images (e.g., grayscale, binarization) **WHEN** beneficial **WITH** safeguards to avoid over-processing.
-
-**Acceptance Criteria:**
-- Given: An image requires OCR processing
-- When: Preprocessing is applied
-- Then: Image enhancement improves OCR accuracy
-- And: Processing time is bounded and configurable
-- And: Preprocessing can be disabled if not beneficial
-- And: Original image quality is preserved
-
-### EARS-OCR-7: OCR Idempotency
-**THE SYSTEM SHALL** be idempotent; re-processing the same attachment **SHALL** not duplicate storage objects or DB writes.
-
-**Acceptance Criteria:**
-- Given: An attachment has already been OCR processed
-- When: Re-processing is attempted
-- Then: No duplicate OCR processing occurs
-- And: No duplicate storage objects are created
-- And: No duplicate database records are written
-- And: Existing OCR text is reused
-
-### EARS-OCR-8: OCR Metrics
-**THE SYSTEM SHALL** emit metrics (queued, started, success, failed, latency) **WITH** inclusion in batch summary.
-
-**Acceptance Criteria:**
-- Given: OCR processing occurs during batch ingestion
-- When: Metrics are collected
-- Then: OCR task counts are recorded (queued, started, success, failed)
-- And: Processing latency is measured (p95, p99)
-- And: Metrics are included in batch summary output
-- And: Per-tenant OCR statistics are available
-
-### EARS-OCR-9: Enterprise Configuration
-**THE SYSTEM SHALL** support config-driven behavior **WITH** YAML configuration, environment overrides, and feature flags.
-
-**Acceptance Criteria:**
-- Given: OCR configuration is defined in YAML
-- When: Environment variables are set
-- Then: Environment overrides take precedence
-- And: Feature flags control OCR behavior
-- And: Configuration is validated at startup
-- And: Sensitive values are not logged
-
-### EARS-OCR-10: LangGraph Sub-Agents
-**THE SYSTEM SHALL** implement OCR processing as LangGraph sub-agents **WITH** deterministic transitions and idempotent behavior.
-
-**Acceptance Criteria:**
-- Given: Email attachments require processing
-- When: OCR workflow is executed
-- Then: Sub-agents coordinate processing steps
-- And: Transitions are deterministic and traceable
-- And: Idempotent skip prevents duplicate work
-- And: Error handling follows agent patterns
+- Given: A sub-agent attempts to modify tenant_id
+- When: The patch is validated
+- Then: The modification is rejected
+- And: A policy violation error is raised
+- And: The violation is logged and metered
+- And: The workflow continues with original tenant_id

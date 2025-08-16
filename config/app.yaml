@@ -8,6 +8,17 @@ app:
   environment: "development"
   debug: false
 
+# Graph Configuration (LangGraph workflow settings)
+graph:
+  linear_mode: true                    # Default: linear execution, no conditional edges
+  conflict_policy: "error"            # "error" | "warn" | "ignore"
+  guard_banned_keys: ["tenant_id"]    # Keys that cannot be modified
+  observability:
+    log_patches: false                 # Log patch contents (PII risk)
+    metrics: true                      # Enable metrics collection
+    trace_id: true                     # Include trace_id in logs
+    redact_sensitive: true             # Redact PII in logs
+
 # OCR Configuration
 ocr:
   enabled: true

@@ -99,171 +99,110 @@ This document outlines the ordered, atomic tasks required to implement the Logis
 **Goal**: Build resilient, idempotent email ingestion pipeline for MIME parsing, normalization, and content preparation
 **EARS Mapping**: EARS-1, EARS-10, EARS-ING-1, EARS-ING-2, EARS-ING-3, EARS-ING-4, EARS-ING-5, EARS-ING-6, EARS-ING-7, EARS-ING-8, EARS-ING-9, EARS-ING-10
 **Files Touched**:
-- `app/ingestion/` (all modules)
-- `app/routers/ingestion.py`
-- `app/main.py`
-- `tests/test_ingestion.py`
-- `specs/` (requirements, design, tasks)
-
-**Acceptance Criteria**:
-- Pipeline processes MIME emails through all stages: parse → normalize → attachments → dedup → storage → DB → chunks → embed queue
-- Idempotent processing with checkpoints and resumable batches
-- Multi-tenant isolation enforced at all stages
-- Metrics collection: docs/sec, dedup_ratio, ocr_rate, failure_buckets, lag
-- All EARS-ING requirements implemented and tested
-- Golden EML fixtures for testing edge cases
-
-**Risks**: Malformed MIME parsing, large attachment handling, OCR latency, false near-dups
-**Dependencies**: TASK-3 (Storage)
-**Status**: IN_PROGRESS
-
-**Subtasks**:
-- TASK-4.1: Source "dropbox" + manifest reader (Phase-1) ✅
-- TASK-4.2: MIME parser + header extractor ✅
-- TASK-4.3: HTML→text normalizer + signature/quote stripper ✅
-- TASK-4.4: Attachment extractor (DOCX/PDF) + OCR task stub + mimetype allowlist ✅
-- TASK-4.5: Dedup (sha256 + simhash/minhash) + lineage + metrics ✅
-- TASK-4.6: Storage writes (raw/norm/attachments) using TASK-3 client ✅
-- TASK-4.7: DB persistence: emails, attachments; threading linkage ✅
-- TASK-4.8: Chunking: splitter + chunk_uid rules + token_count ✅
-- TASK-4.9: Embed job enqueue (provider-agnostic) ✅
-- TASK-4.10: Idempotency/checkpoints/quarantine subsystem ✅
-- TASK-4.11: Metrics/logging/trace IDs ✅
-- TASK-4.12: Tests & docs ✅
-
-**Risks & Mitigation**:
-- **Encoding Pitfalls**: Normalizer safely handles bytes/str with UTF-8 fallback
-- **Partial Writes**: Storage writes occur before DB persistence for consistency
-- **Near-Dup False Positives**: Configurable thresholds and manual review options
-- **Storage Failures**: Retry logic and fallback storage options
-
-**Risks & Mitigation**:
-- **Malformed MIME**: Robust parsing with fallbacks and quarantine
-- **Large Attachments**: Size limits and streaming for oversized files
-- **OCR Latency**: Async processing and task queuing
-- **False Near-Dups**: Configurable thresholds and manual review options
-- **Storage Failures**: Retry logic and fallback storage options
-**Files Touched**:
 - `app/ingestion/__init__.py`
 - `app/ingestion/pipeline.py`
 - `app/ingestion/parser.py`
 - `app/ingestion/normalizer.py`
-- `app/ingestion/attachments.py`
-- `app/ingestion/deduplication.py`
 - `app/ingestion/chunking.py`
-- `app/ingestion/threading.py`
+- `app/ingestion/deduplication.py`
 - `app/ingestion/checkpoints.py`
+- `app/ingestion/threading.py`
+- `app/ingestion/attachments.py`
 - `app/ingestion/metrics.py`
+- `app/ingestion/models.py`
+- `app/routers/ingestion.py`
 - `tests/test_ingestion.py`
-- `data/ingestion/dropbox/`
-- `data/ingestion/manifests/`
+- `config/app.yaml`
 
 **Acceptance Criteria**:
-- Pipeline processes email batches with MIME parsing and normalization
-- Attachments are extracted and OCR tasks are created
-- Deduplication prevents redundant storage and processing
-- Content is chunked with stable chunk_uids and token counts
-- Threading relationships are established and preserved
-- Idempotent operations with checkpointing and resume capability
-- Comprehensive metrics and observability throughout the pipeline
+- MIME parsing extracts headers, parts, and attachments
+- HTML normalization produces clean, stable text
+- Semantic chunking creates stable chunk_uids
+- Deduplication prevents redundant processing
+- Checkpoints enable resumable processing
+- Multi-tenant isolation enforced throughout
+- All EARS-ING requirements implemented and tested
 
-**Risks**: Malformed MIME, large attachments, OCR latency, false near-dups
+**Risks**: MIME edge cases, normalization stability, chunking determinism
 **Dependencies**: TASK-2, TASK-3
 **Status**: COMPLETED
 
-### TASK-5: OCR Service Implementation
-**Goal**: Implement robust OCR and attachment text extraction with provider-agnostic backend support
-**EARS Mapping**: EARS-10, EARS-OCR-1, EARS-OCR-2, EARS-OCR-3, EARS-OCR-4, EARS-OCR-5, EARS-OCR-6, EARS-OCR-7, EARS-OCR-8
+**Subtasks**:
+- TASK-4.1: MIME parser with header extraction ✅
+- TASK-4.2: HTML normalizer (clean text, strip signatures) ✅
+- TASK-4.3: Semantic chunking with stable UIDs ✅
+- TASK-4.4: Deduplication (exact + near-dup) ✅
+- TASK-4.5: Checkpoint system for resumability ✅
+- TASK-4.6: Multi-tenant isolation ✅
+- TASK-4.7: Metrics and observability ✅
+- TASK-4.8: Tests and error handling ✅
+
+### TASK-5: OCR Service & LangGraph Workflow
+**Goal**: Implement OCR service with LangGraph-based workflow for attachment processing
+**EARS Mapping**: EARS-10, EARS-OCR-1, EARS-OCR-2, EARS-OCR-3, EARS-OCR-4, EARS-OCR-5, EARS-OCR-6, EARS-OCR-7, EARS-OCR-8, EARS-OCR-9, EARS-OCR-10
 **Files Touched**:
 - `app/services/ocr.py`
-- `app/services/document_processor.py`
+- `app/agents/ocr_workflow.py`
 - `app/config/ocr.py`
-- `app/ingestion/attachments.py`
-- `app/ingestion/metrics.py`
+- `app/config/manager.py`
 - `tests/test_ocr.py`
+- `tests/test_ocr_workflow.py`
+- `config/app.yaml`
 
 **Acceptance Criteria**:
-- OCR service with provider-agnostic interface
-- Local backend (stub/Tesseract) for development
-- DOCX/PDF native text extraction with OCR fallback
-- OCR text storage and database persistence
-- Comprehensive metrics and batch summary integration
-- Idempotent processing with quarantine system
+- OCR service supports multiple backends (stub, Tesseract, cloud)
+- LangGraph workflow coordinates sub-agents for attachment processing
+- Text extraction from DOCX/PDF with OCR fallback
+- Security validation (mimetype allowlist, size caps)
+- Multi-tenant isolation and idempotent processing
 - All EARS-OCR requirements implemented and tested
 
-**Risks**: Large PDFs, skewed images, OCR accuracy variations
-**Dependencies**: TASK-4 (Ingestion Pipeline)
-**Status**: IN PROGRESS
+**Risks**: OCR accuracy, backend integration, workflow state management
+**Dependencies**: TASK-2, TASK-3, TASK-4
+**Status**: COMPLETED
 
 **Subtasks**:
-- T5.1: Spec updates - Add EARS-OCR, design, tasks ✅
-- T5.2: Config & interfaces - YAML config, OCRService, DocumentProcessor
-- T5.3: LangGraph sub-agents - AttachmentMiner, DocTextExtractor, OCRDecider, OCRWorker, StorageWriter, ComplianceGuard, MetricsAuditor
-- T5.4: OCR queue - In-process queue with concurrency/timeout/retry
-- T5.5: Storage/DB persistence - OCR text storage, ocr_text_object_key persistence
-- T5.6: Testing & validation - Unit/integration tests, E2E validation
-- T5.7: Documentation & runbook - README updates, operations guide
-- T5.8: Hardening & production readiness - Security review, performance targets, failure drills
+- TASK-5.1: OCR service with backend abstraction ✅
+- TASK-5.2: LangGraph workflow with sub-agents ✅
+- TASK-5.3: Text extraction and OCR fallback ✅
+- TASK-5.4: Security validation and compliance ✅
+- TASK-5.5: Multi-tenant isolation ✅
+- TASK-5.6: Tests and error handling ✅
+- TASK-5.7: Configuration and documentation ✅
 
-**Risks & Mitigation**:
-- **Large PDFs**: Page caps and timeout limits
-- **Skewed Images**: Preprocessing pipeline with deskewing
-- **OCR Accuracy**: Multiple backend support and confidence scoring
-- **Processing Time**: Async processing with backpressure controls
+### TASK-5.H: LangGraph State Hardening & Config-Driven OCR Sub-Agents
+**Goal**: Harden LangGraph workflow with explicit state contracts, runtime guards, and config-driven behavior
+**EARS Mapping**: EARS-GRAPH-1, EARS-GRAPH-2, EARS-GRAPH-3, EARS-GRAPH-4, EARS-GRAPH-5
+**Files Touched**:
+- `app/agents/state_contract.py`
+- `app/agents/utils.py`
+- `app/agents/ocr_workflow.py`
+- `app/config/app.yaml`
+- `tests/test_ocr_workflow_state_contract.py`
+- `specs/requirements.md`
+- `specs/design.md`
+- `specs/tasks.md`
+
+**Acceptance Criteria**:
+- StatePatch contract enforces patch-only updates
+- Runtime guards prevent banned key modifications
+- Config-driven routing (linear vs conditional)
+- Per-node observability with metrics and logs
+- Tenant ID immutability guaranteed
+- All EARS-GRAPH requirements implemented and tested
+
+**Risks**: Performance overhead, configuration complexity, backward compatibility
+**Dependencies**: TASK-5
+**Status**: IN_PROGRESS
 
 **Subtasks**:
-- TASK-4.1: Source "dropbox" + manifest reader (Phase-1)
-- TASK-4.2: MIME parser + header extractor
-- TASK-4.3: HTML→text normalizer + signature/quote stripper
-- TASK-4.4: Attachment extractor (DOCX/PDF) + OCR task stub + mimetype allowlist
-- TASK-4.5: Dedup (sha256 + simhash/minhash) + lineage + metrics
-- TASK-4.6: Storage writes (raw/norm/attachments) using TASK-3 client
-- TASK-4.7: DB persistence: emails, attachments; threading linkage
-- TASK-4.8: Chunking: splitter + chunk_uid rules + token_count
-- TASK-4.9: Embed job enqueue (provider-agnostic)
-- TASK-4.10: Idempotency/checkpoints/quarantine subsystem
-- TASK-4.11: Metrics/logging/trace IDs
-- TASK-4.12: Tests & docs
-
-
-
-### TASK-4: Email Ingestion Pipeline
-**Goal**: Build email processing pipeline with MIME parsing and normalization
-**EARS Mapping**: EARS-1, EARS-10
-**Files Touched**:
-- `app/services/ingestion.py`
-- `app/services/email_parser.py`
-- `app/services/normalizer.py`
-- `app/services/deduplication.py`
-
-**Acceptance Criteria**:
-- MIME parsing for various email formats
-- HTML to text conversion
-- Signature and quote stripping
-- Deduplication with simhash/minhash
-- Idempotent processing with checkpoints
-
-**Risks**: Complex email formats may cause parsing failures
-**Dependencies**: TASK-2, TASK-3
-**Status**: OPEN
-
-### TASK-5: OCR Service Implementation
-**Goal**: Implement OCR service for image and PDF attachments
-**EARS Mapping**: EARS-10
-**Files Touched**:
-- `app/services/ocr.py`
-- `app/services/document_processor.py`
-- `app/config/ocr.py`
-
-**Acceptance Criteria**:
-- PDF text extraction
-- Image OCR with multiple engines
-- Fallback mechanisms for OCR failures
-- Text normalization and cleaning
-
-**Risks**: OCR accuracy varies by document quality
-**Dependencies**: TASK-3
-**Status**: OPEN
+- TASK-5.H.1: Spec updates (requirements, design, tasks) 🔄
+- TASK-5.H.2: Core patch utilities + guards
+- TASK-5.H.3: Refactor all OCR sub-agents to patch-only + wrappers
+- TASK-5.H.4: Config flags + routing policy (linear default)
+- TASK-5.H.5: Tests: invariants/concurrency/no-dup-key/determinism
+- TASK-5.H.6: Observability metrics/logs; conflict dashboards
+- TASK-5.H.7: Docs & runbook; commit & sign-off
 
 ### TASK-6: Embedding Service
 **Goal**: Implement vector embeddings for semantic search
