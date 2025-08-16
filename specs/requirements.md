@@ -606,3 +606,25 @@ The Logistics Email AI system processes incoming logistics emails to provide int
 - And: Processing latency is measured (p95, p99)
 - And: Metrics are included in batch summary output
 - And: Per-tenant OCR statistics are available
+
+### EARS-OCR-9: Enterprise Configuration
+**THE SYSTEM SHALL** support config-driven behavior **WITH** YAML configuration, environment overrides, and feature flags.
+
+**Acceptance Criteria:**
+- Given: OCR configuration is defined in YAML
+- When: Environment variables are set
+- Then: Environment overrides take precedence
+- And: Feature flags control OCR behavior
+- And: Configuration is validated at startup
+- And: Sensitive values are not logged
+
+### EARS-OCR-10: LangGraph Sub-Agents
+**THE SYSTEM SHALL** implement OCR processing as LangGraph sub-agents **WITH** deterministic transitions and idempotent behavior.
+
+**Acceptance Criteria:**
+- Given: Email attachments require processing
+- When: OCR workflow is executed
+- Then: Sub-agents coordinate processing steps
+- And: Transitions are deterministic and traceable
+- And: Idempotent skip prevents duplicate work
+- And: Error handling follows agent patterns

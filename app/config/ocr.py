@@ -1,79 +1,111 @@
 """OCR service configuration."""
 
-from typing import List, Dict, Any
-from pydantic import Field
+import os
+from typing import List, Dict, Any, Optional
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
+import yaml
+from pathlib import Path
 
 
 class OCRSettings(BaseSettings):
     """OCR service configuration settings."""
     
     # Backend Configuration
-    default_backend: str = Field(default="local", description="Default OCR backend")
-    enable_tesseract: bool = Field(default=False, description="Enable Tesseract backend")
-    enable_cloud_backends: bool = Field(default=False, description="Enable cloud OCR backends")
+    backend: str = Field(default="local_stub", description="OCR backend to use")
+    enabled: bool = Field(default=True, description="Enable OCR processing")
     
     # Processing Limits
-    max_file_size_mb: int = Field(default=50, description="Maximum file size in MB")
-    max_pages: int = Field(default=100, description="Maximum pages per document")
-    max_concurrent_tasks: int = Field(default=5, description="Maximum concurrent OCR tasks")
-    max_queue_size: int = Field(default=100, description="Maximum OCR queue size")
-    
-    # Timeout & Retry Configuration
-    default_timeout_seconds: int = Field(default=30, description="Default OCR timeout in seconds")
-    max_retries: int = Field(default=3, description="Maximum OCR retry attempts")
-    retry_delay_base: float = Field(default=1.0, description="Base delay for retry backoff")
-    retry_delay_max: float = Field(default=60.0, description="Maximum retry delay")
+    timeout_seconds: int = Field(default=20, description="Default OCR timeout in seconds")
+    max_retries: int = Field(default=2, description="Maximum OCR retry attempts")
+    concurrency: int = Field(default=4, description="Maximum concurrent OCR tasks")
+    max_pages: int = Field(default=20, description="Maximum pages per document")
+    size_cap_mb: int = Field(default=15, description="Maximum file size in MB")
     
     # File Type Configuration
-    allowed_mimetypes: List[str] = Field(
+    allow_mimetypes: List[str] = Field(
         default=[
-            # Images
-            "image/jpeg", "image/png", "image/gif", "image/bmp", "image/tiff",
-            # Documents
-            "application/pdf", "application/msword", 
+            "application/pdf", "image/png", "image/jpeg", "image/gif", "image/bmp", "image/tiff",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "text/plain"
+            "application/msword", "text/plain"
         ],
         description="Allowed mimetypes for OCR processing"
     )
     
-    # Size limits by file type
-    size_limits_mb: Dict[str, int] = Field(
+    # Image Preprocessing
+    preprocess: Dict[str, Any] = Field(
         default={
-            "image/jpeg": 10,
-            "image/png": 10,
-            "image/gif": 5,
-            "image/bmp": 10,
-            "image/tiff": 25,
-            "application/pdf": 50,
-            "application/msword": 25,
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": 25,
-            "text/plain": 5
+            "grayscale": True,
+            "binarize": True,
+            "deskew": True,
+            "timeout_seconds": 5
         },
-        description="Size limits in MB by mimetype"
+        description="Image preprocessing configuration"
     )
     
-    # Image Preprocessing
-    enable_preprocessing: bool = Field(default=True, description="Enable image preprocessing")
-    preprocessing_timeout: int = Field(default=10, description="Preprocessing timeout in seconds")
-    enable_grayscale: bool = Field(default=True, description="Enable grayscale conversion")
-    enable_binarization: bool = Field(default=True, description="Enable binarization")
-    enable_deskewing: bool = Field(default=True, description="Enable image deskewing")
+    # Feature Flags
+    feature_flags: Dict[str, bool] = Field(
+        default={
+            "ocr_idempotent_skip": True,
+            "ocr_queue_inprocess": True,
+            "ocr_redact_logs": True,
+            "ocr_preprocessing": True,
+            "ocr_tesseract_enabled": False
+        },
+        description="OCR feature flags"
+    )
     
-    # Metrics Configuration
-    enable_detailed_metrics: bool = Field(default=True, description="Enable detailed OCR metrics")
-    metrics_retention_days: int = Field(default=30, description="Metrics retention period")
+    @field_validator('backend')
+    @classmethod
+    def validate_backend(cls, v: str) -> str:
+        """Validate OCR backend selection."""
+        allowed_backends = ["local_stub", "tesseract", "aws_textract", "gcv", "azure_cv"]
+        if v not in allowed_backends:
+            raise ValueError(f"Invalid OCR backend: {v}. Allowed: {allowed_backends}")
+        return v
     
-    # Security Configuration
-    quarantine_failed: bool = Field(default=True, description="Quarantine failed OCR attempts")
-    log_pii: bool = Field(default=False, description="Log PII in OCR processing")
+    @field_validator('concurrency')
+    @classmethod
+    def validate_concurrency(cls, v: int) -> int:
+        """Validate concurrency limits."""
+        if v < 1 or v > 20:
+            raise ValueError("OCR concurrency must be between 1 and 20")
+        return v
+    
+    @field_validator('timeout_seconds')
+    @classmethod
+    def validate_timeout(cls, v: int) -> int:
+        """Validate timeout values."""
+        if v < 1 or v > 300:
+            raise ValueError("OCR timeout must be between 1 and 300 seconds")
+        return v
     
     class Config:
-        env_prefix = "OCR_"
+        env_prefix = "APP_OCR_"
         case_sensitive = False
 
 
+def load_yaml_config() -> Dict[str, Any]:
+    """Load configuration from YAML file."""
+    config_path = Path(__file__).parent / "app.yaml"
+    
+    if not config_path.exists():
+        return {}
+    
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+            return config.get('ocr', {})
+    except Exception as e:
+        print(f"Warning: Failed to load YAML config: {e}")
+        return {}
+
 def get_ocr_settings() -> OCRSettings:
-    """Get OCR configuration settings."""
-    return OCRSettings()
+    """Get OCR configuration settings with YAML fallback."""
+    # Load YAML config first
+    yaml_config = load_yaml_config()
+    
+    # Create settings with YAML defaults, environment overrides
+    settings = OCRSettings(**yaml_config)
+    
+    return settings

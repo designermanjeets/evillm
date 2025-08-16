@@ -1,0 +1,146 @@
+# Application Configuration
+# Environment variables override these values
+# Format: APP_<SECTION>_<KEY>
+
+app:
+  name: "evillm"
+  version: "1.0.0"
+  environment: "development"
+  debug: false
+
+# OCR Configuration
+ocr:
+  enabled: true
+  backend: "local_stub"  # options: local_stub, tesseract, aws_textract (future), gcv (future), azure_cv (future)
+  timeout_seconds: 20
+  max_retries: 2
+  concurrency: 4
+  max_pages: 20
+  size_cap_mb: 15
+  allow_mimetypes:
+    - "application/pdf"
+    - "image/png"
+    - "image/jpeg"
+    - "image/gif"
+    - "image/bmp"
+    - "image/tiff"
+    - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    - "application/msword"
+    - "text/plain"
+  
+  preprocess:
+    grayscale: true
+    binarize: true
+    deskew: true
+    timeout_seconds: 5
+  
+  feature_flags:
+    ocr_idempotent_skip: true
+    ocr_queue_inprocess: true
+    ocr_redact_logs: true
+    ocr_preprocessing: true
+    ocr_tesseract_enabled: false
+
+# Storage Configuration
+storage:
+  provider: "minio"  # minio, s3, azure_blob
+  endpoint: "http://localhost:9000"
+  bucket: "evillm"
+  region: "us-east-1"
+  access_key: ""  # Set via env var
+  secret_key: ""  # Set via env var
+  secure: false
+  
+  # Object storage paths
+  paths:
+    emails: "{tenant_id}/emails/{batch_id}/{email_id}"
+    attachments: "{tenant_id}/emails/{batch_id}/{email_id}/attachments"
+    ocr_text: "{tenant_id}/emails/{batch_id}/{email_id}/ocr"
+  
+  # Security
+  signed_url_ttl: 900  # 15 minutes
+  max_file_size_mb: 100
+
+# Database Configuration
+database:
+  provider: "postgresql"
+  host: "localhost"
+  port: 5432
+  name: "evillm"
+  user: "evillm"
+  password: ""  # Set via env var
+  ssl_mode: "prefer"
+  max_connections: 20
+  pool_timeout: 30
+
+# Models Configuration
+models:
+  embeddings:
+    provider: "openai"
+    model: "text-embedding-3-large"
+    batch_size: 64
+    max_tokens: 8192
+  
+  llm:
+    provider: "openai"
+    model: "gpt-4o-mini"
+    max_tokens: 4096
+    temperature: 0.1
+  
+  ocr:
+    default_confidence_threshold: 0.7
+    language_hint: "en"
+    tesseract_config: "--oem 3 --psm 6"
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "json"
+  include_trace_id: true
+  redact_pii: true
+  
+  # OCR-specific logging
+  ocr:
+    log_extracted_text: false
+    log_confidence_scores: true
+    log_processing_times: true
+
+# Metrics Configuration
+metrics:
+  enabled: true
+  retention_days: 30
+  
+  # OCR metrics
+  ocr:
+    latency_p95_target: 3.0  # seconds for dev stub
+    latency_p95_target_prod: 10.0  # seconds for real OCR
+    success_rate_target: 0.95
+    queue_depth_alert_threshold: 0.8
+
+# Security Configuration
+security:
+  tenant_isolation: true
+  mimetype_validation: true
+  size_validation: true
+  content_scanning: false  # Future: virus scanning
+  
+  # OCR security
+  ocr:
+    quarantine_failed: true
+    max_retry_attempts: 3
+    suspicious_content_alert: true
+
+# Performance Configuration
+performance:
+  # OCR processing
+  ocr:
+    max_concurrent_tasks: 4
+    queue_size_limit: 100
+    processing_timeout: 30
+    preprocessing_timeout: 10
+  
+  # Batch processing
+  batch:
+    max_emails_per_batch: 1000
+    max_attachments_per_email: 20
+    chunk_size: 100

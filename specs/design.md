@@ -961,6 +961,59 @@ The OCR system follows a multi-stage processing flow designed for resilience, sc
 Attachment Detected → Text Extractor (DOCX/PDF) → If Empty → OCR Queue → OCR Worker → Store Text → Update DB → Metrics
 ```
 
+### LangGraph Sub-Agent Architecture
+
+The OCR system implements a LangGraph-based workflow with specialized sub-agents for each processing stage:
+
+#### Sub-Agent Flow
+```
+Email → AttachmentMiner → DocTextExtractor → OCRDecider → OCRWorker → StorageWriter → ComplianceGuard → MetricsAuditor
+```
+
+#### Sub-Agent Responsibilities
+
+**AttachmentMiner**
+- Scans email for attachments
+- Validates mimetype allowlist and size caps
+- Creates attachment processing tasks
+- Enforces tenant isolation
+
+**DocTextExtractor**
+- Attempts native text extraction from DOCX/PDF
+- Returns extracted text + metadata
+- Determines if OCR is needed
+- Handles extraction failures gracefully
+
+**OCRDecider**
+- Evaluates extraction results against policy
+- Decides whether OCR processing is required
+- Applies business rules and thresholds
+- Routes to appropriate processing path
+
+**OCRWorker**
+- Executes OCR using selected backend
+- Manages timeouts, retries, and backpressure
+- Handles provider-specific errors
+- Returns OCR results with confidence scores
+
+**StorageWriter**
+- Writes OCR text to object storage
+- Generates tenant-aware storage paths
+- Returns storage object keys
+- Ensures idempotent writes
+
+**ComplianceGuard**
+- Performs content sanity checks
+- Applies redaction if needed
+- Enforces security policies
+- Logs compliance events
+
+**MetricsAuditor**
+- Records processing metrics
+- Tracks performance indicators
+- Updates batch summaries
+- Triggers alerts on thresholds
+
 #### Stage Details
 
 1. **Text Extraction Stage**: Attempt native text extraction from DOCX/PDF documents

@@ -196,14 +196,14 @@ This document outlines the ordered, atomic tasks required to implement the Logis
 **Status**: IN PROGRESS
 
 **Subtasks**:
-- T5.1: OCR interface + provider registry
-- T5.2: Local backend (dev): stub/Tesseract adapter (feature-flagged)
-- T5.3: DOCX/PDF text extractor (native text) with fallbacks
-- T5.4: OCR queue + worker loop (in-process or simple table/stub for Phase-1)
-- T5.5: Storage writes for OCR text + DB update (ocr_text_object_key)
-- T5.6: Policies: allowlist, caps, timeouts, retries, quarantine
-- T5.7: Metrics wiring + batch summary integration
-- T5.8: Tests (unit/integration) & docs
+- T5.1: Spec updates - Add EARS-OCR, design, tasks ✅
+- T5.2: Config & interfaces - YAML config, OCRService, DocumentProcessor
+- T5.3: LangGraph sub-agents - AttachmentMiner, DocTextExtractor, OCRDecider, OCRWorker, StorageWriter, ComplianceGuard, MetricsAuditor
+- T5.4: OCR queue - In-process queue with concurrency/timeout/retry
+- T5.5: Storage/DB persistence - OCR text storage, ocr_text_object_key persistence
+- T5.6: Testing & validation - Unit/integration tests, E2E validation
+- T5.7: Documentation & runbook - README updates, operations guide
+- T5.8: Hardening & production readiness - Security review, performance targets, failure drills
 
 **Risks & Mitigation**:
 - **Large PDFs**: Page caps and timeout limits
