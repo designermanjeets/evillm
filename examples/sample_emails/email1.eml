@@ -1,0 +1,29 @@
+From: sender1@example.com
+To: recipient@example.com
+Subject: Test Email 1 - Logistics Inquiry
+Message-ID: <email1@example.com>
+Date: Mon, 01 Jan 2024 12:00:00 +0000
+Content-Type: text/plain; charset=UTF-8
+
+Hello,
+
+I'm inquiring about shipping rates for a package from New York to Los Angeles.
+
+Package details:
+- Weight: 25 lbs
+- Dimensions: 24" x 18" x 12"
+- Contents: Electronics equipment
+- Delivery: Standard ground shipping
+
+Please provide a quote including:
+1. Shipping cost
+2. Estimated delivery time
+3. Insurance options
+4. Tracking information
+
+Thank you for your assistance.
+
+Best regards,
+John Smith
+Logistics Manager
+ABC Company

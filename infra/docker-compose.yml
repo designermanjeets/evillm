@@ -1,0 +1,141 @@
+version: '3.8'
+
+services:
+  # Main application
+  app:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=evillm
+      - DB_USER=postgres
+      - DB_PASSWORD=evillm_password
+      - STORAGE_ENDPOINT=minio:9000
+      - OPENSEARCH_HOST=opensearch
+      - QDRANT_HOST=qdrant
+    depends_on:
+      - postgres
+      - minio
+      - opensearch
+      - qdrant
+    volumes:
+      - ../logs:/app/logs
+    networks:
+      - evillm-network
+
+  # PostgreSQL database
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: evillm
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: evillm_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../app/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    networks:
+      - evillm-network
+
+  # MinIO object storage
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - evillm-network
+
+  # OpenSearch for BM25 search
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=admin
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    networks:
+      - evillm-network
+
+  # Qdrant vector database
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - evillm-network
+
+  # Redis for caching and queues
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - evillm-network
+
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../infra/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - evillm-network
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../infra/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ../infra/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - evillm-network
+
+volumes:
+  postgres_data:
+  minio_data:
+  opensearch_data:
+  qdrant_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  evillm-network:
+    driver: bridge

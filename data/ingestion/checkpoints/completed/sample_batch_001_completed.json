@@ -1,0 +1,16 @@
+{
+  "checkpoint_id": "checkpoint_sample_batch_001_20250816_085344",
+  "batch_id": "sample_batch_001",
+  "tenant_id": "test_tenant",
+  "total_emails": 3,
+  "processed_emails": 0,
+  "failed_emails": 0,
+  "quarantined_emails": 0,
+  "last_processed_email": null,
+  "last_processed_position": 0,
+  "is_complete": true,
+  "error_count": 0,
+  "created_at": "2025-08-16T08:53:44.526834",
+  "updated_at": "2025-08-16T08:53:44.531643",
+  "completed_at": "2025-08-16T08:53:44.531643"
+}

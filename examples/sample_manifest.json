@@ -1,0 +1,40 @@
+{
+  "batch_id": "sample_batch_001",
+  "source_type": "manifest",
+  "file_manifest": [
+    {
+      "file_path": "examples/sample_emails/email1.eml",
+      "file_name": "email1.eml",
+      "file_size": 1024,
+      "metadata": {
+        "expected_subject": "Test Email 1",
+        "expected_from": "sender1@example.com"
+      }
+    },
+    {
+      "file_path": "examples/sample_emails/email2.eml",
+      "file_name": "email2.eml",
+      "file_size": 2048,
+      "metadata": {
+        "expected_subject": "Test Email 2",
+        "expected_from": "sender2@example.com"
+      }
+    },
+    {
+      "file_path": "examples/sample_emails/email3.eml",
+      "file_name": "email3.eml",
+      "file_size": 1536,
+      "metadata": {
+        "expected_subject": "Test Email 3",
+        "expected_from": "sender3@example.com"
+      }
+    }
+  ],
+  "processing_options": {
+    "batch_size": 100,
+    "enable_ocr": true,
+    "dedup_threshold": 0.8,
+    "chunk_size": 512,
+    "chunk_overlap": 50
+  }
+}

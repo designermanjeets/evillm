@@ -1,0 +1,53 @@
+From: sender2@example.com
+To: recipient@example.com
+Subject: Test Email 2 - HTML Email with Attachments
+Message-ID: <email2@example.com>
+In-Reply-To: <email1@example.com>
+References: <email1@example.com>
+Date: Mon, 01 Jan 2024 14:30:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="boundary123"
+
+--boundary123
+Content-Type: text/html; charset=UTF-8
+
+<html>
+<head>
+    <title>Shipping Quote Response</title>
+</head>
+<body>
+    <h1>Shipping Quote</h1>
+    <p>Thank you for your inquiry about shipping from New York to Los Angeles.</p>
+    
+    <h2>Package Details</h2>
+    <ul>
+        <li><strong>Weight:</strong> 25 lbs</li>
+        <li><strong>Dimensions:</strong> 24" x 18" x 12"</li>
+        <li><strong>Contents:</strong> Electronics equipment</li>
+        <li><strong>Service:</strong> Standard ground shipping</li>
+    </ul>
+    
+    <h2>Quote</h2>
+    <table border="1">
+        <tr><td>Shipping Cost:</td><td>$45.99</td></tr>
+        <tr><td>Estimated Delivery:</td><td>3-5 business days</td></tr>
+        <tr><td>Insurance:</td><td>$5.99 (up to $500 coverage)</td></tr>
+        <tr><td>Total:</td><td>$51.98</td></tr>
+    </table>
+    
+    <p>Tracking will be provided once the package is shipped.</p>
+    
+    <p>Best regards,<br>
+    Sarah Johnson<br>
+    Customer Service Representative<br>
+    XYZ Shipping Company</p>
+</body>
+</html>
+
+--boundary123
+Content-Type: application/pdf; name="shipping_quote.pdf"
+Content-Disposition: attachment; filename="shipping_quote.pdf"
+
+[PDF content would be here in a real email]
+
+--boundary123--

@@ -1,0 +1,30 @@
+From: sender3@example.com
+To: recipient@example.com
+Subject: Test Email 3 - Malformed MIME Test
+Message-ID: <email3@example.com>
+Date: Mon, 01 Jan 2024 16:45:00 +0000
+Content-Type: text/plain; charset=UTF-8
+
+This is a test email with some special characters and formatting.
+
+Special characters: é, ñ, ü, €, £, ¥
+Numbers: 123, 456, 789
+Symbols: @, #, $, %, &, *
+
+This email is designed to test:
+- Character encoding handling
+- Special character processing
+- MIME parsing edge cases
+- Content normalization
+
+The content includes:
+1. Multiple paragraphs
+2. Various punctuation marks
+3. Different types of whitespace
+4. Mixed case text
+
+This should help verify that the ingestion pipeline handles various content types correctly.
+
+Best regards,
+Test User
+Quality Assurance Team

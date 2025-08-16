@@ -1,0 +1,236 @@
+# Promptfoo evaluation configuration for Logistics Email AI
+# Tests response quality across grounding, completeness, tone, and policy
+
+prompts:
+  - "You are a logistics customer service representative. Respond to this inquiry: {{query}}"
+
+providers:
+  - id: openai:gpt-4
+    config:
+      apiKey: $OPENAI_API_KEY
+      model: gpt-4
+
+tests:
+  # Test 1: Basic logistics query
+  - vars:
+      query: "What is the shipping cost from New York to Los Angeles for 500kg?"
+    assert:
+      - type: contains
+        value: "shipping cost"
+      - type: contains
+        value: "New York"
+      - type: contains
+        value: "Los Angeles"
+      - type: contains
+        value: "500kg"
+      - type: not-contains
+        value: "I don't know"
+      - type: not-contains
+        value: "I cannot provide"
+
+  # Test 2: Specific pricing request
+  - vars:
+      query: "I need a quote for express shipping of fragile items from Miami to Seattle. Package weight is 200kg."
+    assert:
+      - type: contains
+        value: "express shipping"
+      - type: contains
+        value: "fragile"
+      - type: contains
+        value: "Miami"
+      - type: contains
+        value: "Seattle"
+      - type: contains
+        value: "200kg"
+      - type: contains
+        value: "quote"
+
+  # Test 3: Policy compliance
+  - vars:
+      query: "Can you ship hazardous materials internationally?"
+    assert:
+      - type: contains
+        value: "hazardous"
+      - type: contains
+        value: "international"
+      - type: not-contains
+        value: "yes, we can"
+      - type: contains
+        value: "regulations"
+      - type: contains
+        value: "restrictions"
+
+  # Test 4: Date and time sensitivity
+  - vars:
+      query: "I need delivery by December 24th for Christmas. Is this possible?"
+    assert:
+      - type: contains
+        value: "December 24th"
+      - type: contains
+        value: "Christmas"
+      - type: contains
+        value: "delivery"
+      - type: not-contains
+        value: "guaranteed"
+      - type: contains
+        value: "timeline"
+
+  # Test 5: Complex multi-part query
+  - vars:
+      query: "I have 3 shipments: 100kg to Toronto, 250kg to Vancouver, and 75kg to Montreal. What are the costs and delivery times for each?"
+    assert:
+      - type: contains
+        value: "Toronto"
+      - type: contains
+        value: "Vancouver"
+      - type: contains
+        value: "Montreal"
+      - type: contains
+        value: "100kg"
+      - type: contains
+        value: "250kg"
+      - type: contains
+        value: "75kg"
+      - type: contains
+        value: "delivery times"
+
+  # Test 6: Error handling
+  - vars:
+      query: "What's the shipping cost to Mars?"
+    assert:
+      - type: contains
+        value: "Mars"
+      - type: contains
+        value: "not possible"
+      - type: contains
+        value: "service area"
+      - type: not-contains
+        value: "$0"
+      - type: not-contains
+        value: "free"
+
+  # Test 7: Professional tone
+  - vars:
+      query: "Your service is terrible and I want a refund!"
+    assert:
+      - type: contains
+        value: "understand"
+      - type: contains
+        value: "concern"
+      - type: not-contains
+        value: "terrible"
+      - type: not-contains
+        value: "refund"
+      - type: contains
+        value: "help"
+      - type: contains
+        value: "resolve"
+
+  # Test 8: Technical specifications
+  - vars:
+      query: "What are the maximum dimensions for air freight to Europe?"
+    assert:
+      - type: contains
+        value: "dimensions"
+      - type: contains
+        value: "air freight"
+      - type: contains
+        value: "Europe"
+      - type: not-contains
+        value: "unlimited"
+      - type: contains
+        value: "maximum"
+
+  # Test 9: Insurance and liability
+  - vars:
+      query: "What happens if my package gets lost during transit?"
+    assert:
+      - type: contains
+        value: "lost"
+      - type: contains
+        value: "transit"
+      - type: contains
+        value: "insurance"
+      - type: contains
+        value: "claim"
+      - type: not-contains
+        value: "we're not responsible"
+
+  # Test 10: Sustainability and green options
+  - vars:
+      query: "Do you offer carbon-neutral shipping options?"
+    assert:
+      - type: contains
+        value: "carbon-neutral"
+      - type: contains
+        value: "sustainable"
+      - type: contains
+        value: "environmental"
+      - type: not-contains
+        value: "we don't care about the environment"
+
+# Evaluation criteria
+evaluate:
+  - type: llm-rubric
+    name: "Grounding"
+    description: "Does the response contain factual information that directly addresses the query?"
+    criteria:
+      - name: "Factual Accuracy"
+        description: "All stated facts are accurate and verifiable"
+        score: 1
+      - name: "Query Relevance"
+        description: "Response directly addresses the specific query asked"
+        score: 1
+      - name: "Source Attribution"
+        description: "Information is attributed to appropriate sources when possible"
+        score: 1
+
+  - type: llm-rubric
+    name: "Completeness"
+    description: "Does the response cover all aspects of the query comprehensively?"
+    criteria:
+      - name: "Query Coverage"
+        description: "All parts of the multi-part query are addressed"
+        score: 1
+      - name: "Detail Level"
+        description: "Response provides appropriate level of detail"
+        score: 1
+      - name: "Action Items"
+        description: "Clear next steps or action items are provided"
+        score: 1
+
+  - type: llm-rubric
+    name: "Tone"
+    description: "Is the response written in an appropriate professional tone?"
+    criteria:
+      - name: "Professionalism"
+        description: "Tone is appropriate for business communication"
+        score: 1
+      - name: "Empathy"
+        description: "Shows understanding of customer needs and concerns"
+        score: 1
+      - name: "Clarity"
+        description: "Language is clear and easy to understand"
+        score: 1
+
+  - type: llm-rubric
+    name: "Policy"
+    description: "Does the response comply with business policies and regulations?"
+    criteria:
+      - name: "Regulatory Compliance"
+        description: "Response follows applicable regulations and policies"
+        score: 1
+      - name: "Business Rules"
+        description: "Response adheres to company business rules"
+        score: 1
+      - name: "Risk Management"
+        description: "Appropriate disclaimers and risk information included"
+        score: 1
+
+# Threshold configuration
+threshold:
+  grounding: 0.8
+  completeness: 0.8
+  tone: 0.8
+  policy: 0.9
+  overall: 0.8
