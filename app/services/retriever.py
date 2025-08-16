@@ -188,6 +188,17 @@ class RetrieverAdapter:
                         metrics=search_metrics)
             return []
     
+    def get_search_metrics(self) -> Dict[str, Any]:
+        """Get search performance metrics."""
+        return {
+            "hybrid_search_enabled": self._has_hybrid_search(),
+            "bm25_service_available": self.bm25_service.client is not None,
+            "vector_service_available": self.vector_service._client["type"] != "stub",
+            "fusion_engine_configured": hasattr(self, 'fusion_engine'),
+            "fallback_enabled": self.fallback_enabled,
+            "max_results": self.max_results
+        }
+    
     def _get_embedding_provider(self):
         """Get embedding provider for vector search."""
         try:
@@ -230,11 +241,14 @@ class RetrieverAdapter:
             result = {
                 "id": item.get("id"),
                 "score": item.get("score", 0.0),
+                "source": "vector",
                 "citations": {
                     "chunk_id": item.get("payload", {}).get("chunk_id"),
                     "email_id": item.get("payload", {}).get("email_id"),
                     "content": item.get("payload", {}).get("content", ""),
-                    "subject": ""  # Vector search doesn't have subject field
+                    "subject": item.get("payload", {}).get("subject", ""),
+                    "created_at": item.get("payload", {}).get("created_at"),
+                    "tenant_id": item.get("payload", {}).get("tenant_id")
                 }
             }
             results.append(result)
@@ -246,13 +260,20 @@ class RetrieverAdapter:
         citations = []
         
         for result in search_results:
-            citations.append(CitationItem(
+            # Create citation with enhanced metadata
+            citation = CitationItem(
                 email_id=result["citations"]["email_id"],
                 chunk_uid=result["citations"]["chunk_id"],
                 object_key=f"search_result_{result['id']}",
                 score=result["score"],
                 content_preview=result["citations"]["content"][:200] + "..." if len(result["citations"]["content"]) > 200 else result["citations"]["content"]
-            ))
+            )
+            
+            # Add source information to chunk_id if available
+            if result.get("source"):
+                citation.chunk_id = f"{result['source']}_{result['citations']['chunk_id']}"
+            
+            citations.append(citation)
         
         return citations
     

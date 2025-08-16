@@ -757,6 +757,14 @@ Project Manager"""
         assert hasattr(retriever, 'bm25_service')
         assert hasattr(retriever, 'vector_service')
         assert hasattr(retriever, 'fusion_engine')
+        
+        # Test search metrics
+        metrics = retriever.get_search_metrics()
+        assert isinstance(metrics, dict)
+        assert "hybrid_search_enabled" in metrics
+        assert "bm25_service_available" in metrics
+        assert "vector_service_available" in metrics
+        assert "fusion_engine_configured" in metrics
     
     @pytest.mark.asyncio
     async def test_llm_streams_and_collects_used_citations(self, mock_workflow):

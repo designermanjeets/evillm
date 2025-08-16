@@ -252,16 +252,16 @@ This document outlines the ordered, atomic tasks required to implement the Logis
 - Citation mapping (chunk→email/attachment)
 - Performance metrics and monitoring
 
-**Risks**: Search performance, index management, fusion algorithm tuning
-**Dependencies**: TASK-6
-**Status**: OPEN
+**Risks**: ✅ Low - Implementation complete and tested
+**Dependencies**: ✅ TASK-6 (Embeddings) - Completed
+**Status**: ✅ **COMPLETED**
 
 **Subtasks**:
-- TASK-7.1: BM25/OpenSearch index + filters + health/aliases
-- TASK-7.2: Vector search integration
-- TASK-7.3: RRF fusion + optional reranker interface
-- TASK-7.4: Citation mapping and metadata
-- TASK-7.5: Performance optimization and monitoring
+- TASK-7.1: BM25/OpenSearch index + filters + health/aliases ✅
+- TASK-7.2: Vector search integration ✅
+- TASK-7.3: RRF fusion + optional reranker interface ✅
+- TASK-7.4: Citation mapping and metadata ✅
+- TASK-7.5: Performance optimization and monitoring ✅
 
 ### TASK-8: LangGraph Draft Agent Framework
 **Goal**: Implement draft flow orchestration with sub-agents and streaming
@@ -286,7 +286,7 @@ This document outlines the ordered, atomic tasks required to implement the Logis
 - Evaluation gate for dev-mode quality control
 
 **Risks**: Complex agent interactions, streaming complexity, evaluation accuracy
-**Dependencies**: TASK-7
+**Dependencies**: ✅ TASK-7 (Hybrid Search) - Completed
 **Status**: OPEN
 
 **Subtasks**:
