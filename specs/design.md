@@ -1761,8 +1761,417 @@ class EmbeddingMetrics:
 
 ---
 
-**Generated on 2025-08-16 18:30 PDT**
+**Generated on 2025-08-16 19:15 PDT**
 
-**Repo commit hash**: `ddaf7966e70cc13b92ecfd97bdc5beb0c9d0f48b`
+**Repo commit hash**: `9fc42a7`
+
+**Analysis Scope**: Complete codebase analysis with focus on EARS compliance, implementation status, and roadmap planning
+
+## BM25 Search Architecture
+
+### OpenSearch Index Schema
+
+The BM25 search service uses OpenSearch with the following index structure:
+
+```json
+{
+  "mappings": {
+    "properties": {
+      "tenant_id": {
+        "type": "keyword",
+        "index": true
+      },
+      "email_id": {
+        "type": "keyword",
+        "index": true
+      },
+      "chunk_id": {
+        "type": "keyword",
+        "index": true
+      },
+      "thread_id": {
+        "type": "keyword",
+        "index": true
+      },
+      "subject": {
+        "type": "text",
+        "analyzer": "standard",
+        "search_analyzer": "standard"
+      },
+      "content": {
+        "type": "text",
+        "analyzer": "standard",
+        "search_analyzer": "standard"
+      },
+      "from_addr": {
+        "type": "keyword",
+        "index": true
+      },
+      "to_addrs": {
+        "type": "keyword",
+        "index": true
+      },
+      "sent_at": {
+        "type": "date",
+        "format": "strict_date_optional_time||epoch_millis"
+      },
+      "has_attachments": {
+        "type": "boolean"
+      },
+      "attachment_types": {
+        "type": "keyword",
+        "index": true
+      },
+      "chunk_uid": {
+        "type": "keyword",
+        "index": true
+      },
+      "token_count": {
+        "type": "integer"
+      },
+      "created_at": {
+        "type": "date",
+        "format": "strict_date_optional_time||epoch_millis"
+      }
+    }
+  },
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 1,
+    "analysis": {
+      "analyzer": {
+        "standard": {
+          "type": "standard",
+          "stopwords": "_english_"
+        }
+      }
+    }
+  }
+}
+```
+
+### Tenant Isolation & Filtering
+
+All search operations enforce tenant isolation through mandatory filters:
+
+```python
+class BM25SearchService:
+    def __init__(self, host: str, index_prefix: str = "emails"):
+        self.host = host
+        self.index_prefix = index_prefix
+        self.client = None
+    
+    def _get_index_name(self, tenant_id: str) -> str:
+        """Generate tenant-scoped index name."""
+        return f"{self.index_prefix}_{tenant_id}"
+    
+    def _build_tenant_filter(self, tenant_id: str) -> Dict[str, Any]:
+        """Build mandatory tenant filter for all queries."""
+        return {
+            "term": {
+                "tenant_id": tenant_id
+            }
+        }
+    
+    async def search(self, tenant_id: str, query: str, filters: Dict[str, Any] = None, 
+                    size: int = 20, from_: int = 0) -> Dict[str, Any]:
+        """Perform BM25 search with tenant isolation."""
+        # Always include tenant filter
+        must_clauses = [self._build_tenant_filter(tenant_id)]
+        
+        # Add user-provided filters
+        if filters:
+            for field, value in filters.items():
+                if field in ["thread_id", "sent_at", "has_attachments"]:
+                    must_clauses.append({"term": {field: value}})
+                elif field == "sent_at_range":
+                    must_clauses.append({
+                        "range": {
+                            "sent_at": {
+                                "gte": value.get("from"),
+                                "lte": value.get("to")
+                            }
+                        }
+                    })
+        
+        # Build search query
+        search_body = {
+            "query": {
+                "bool": {
+                    "must": [
+                        {
+                            "multi_match": {
+                                "query": query,
+                                "fields": ["subject^2", "content", "from_addr"],
+                                "type": "best_fields",
+                                "fuzziness": "AUTO"
+                            }
+                        }
+                    ],
+                    "filter": must_clauses
+                }
+            },
+            "highlight": {
+                "fields": {
+                    "subject": {},
+                    "content": {
+                        "fragment_size": 150,
+                        "number_of_fragments": 3
+                    }
+                }
+            },
+            "sort": [
+                {"_score": {"order": "desc"}},
+                {"sent_at": {"order": "desc"}}
+            ],
+            "size": size,
+            "from": from_
+        }
+        
+        return await self._execute_search(tenant_id, search_body)
+```
+
+### Index Management & Health
+
+The service provides comprehensive index management:
+
+```python
+class BM25IndexManager:
+    """Manages OpenSearch indices and health monitoring."""
+    
+    async def create_index(self, tenant_id: str) -> bool:
+        """Create tenant-specific index with proper mapping."""
+        index_name = self._get_index_name(tenant_id)
+        
+        try:
+            # Check if index exists
+            if await self.client.indices.exists(index=index_name):
+                logger.info("Index already exists", index_name=index_name)
+                return True
+            
+            # Create index with mapping
+            await self.client.indices.create(
+                index=index_name,
+                body=self._get_index_mapping()
+            )
+            
+            logger.info("Index created successfully", index_name=index_name)
+            return True
+            
+        except Exception as e:
+            logger.error("Failed to create index", 
+                        index_name=index_name, 
+                        error=str(e))
+            return False
+    
+    async def update_aliases(self, tenant_id: str, operation: str = "add") -> bool:
+        """Update index aliases for zero-downtime operations."""
+        index_name = self._get_index_name(tenant_id)
+        alias_name = f"{self.index_prefix}_current_{tenant_id}"
+        
+        try:
+            if operation == "add":
+                await self.client.indices.put_alias(
+                    index=index_name,
+                    name=alias_name
+                )
+            elif operation == "remove":
+                await self.client.indices.delete_alias(
+                    index=index_name,
+                    name=alias_name
+                )
+            
+            logger.info("Alias updated", 
+                       operation=operation, 
+                       index_name=index_name, 
+                       alias_name=alias_name)
+            return True
+            
+        except Exception as e:
+            logger.error("Failed to update alias", 
+                        operation=operation, 
+                        index_name=index_name, 
+                        error=str(e))
+            return False
+    
+    async def get_health_status(self, tenant_id: str) -> Dict[str, Any]:
+        """Get index health status for monitoring."""
+        index_name = self._get_index_name(tenant_id)
+        
+        try:
+            # Get index stats
+            stats = await self.client.indices.stats(index=index_name)
+            index_stats = stats["indices"].get(index_name, {})
+            
+            # Get index settings
+            settings = await self.client.indices.get_settings(index=index_name)
+            index_settings = settings["indices"].get(index_name, {})
+            
+            return {
+                "index_name": index_name,
+                "tenant_id": tenant_id,
+                "document_count": index_stats.get("total", {}).get("docs", {}).get("count", 0),
+                "storage_size": index_stats.get("total", {}).get("store", {}).get("size_in_bytes", 0),
+                "shard_count": len(index_stats.get("shards", {})),
+                "status": "green" if index_stats.get("health") == "green" else "yellow",
+                "created_at": index_settings.get("settings", {}).get("index", {}).get("creation_date")
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get health status", 
+                        index_name=index_name, 
+                        error=str(e))
+            return {
+                "index_name": index_name,
+                "tenant_id": tenant_id,
+                "status": "error",
+                "error": str(e)
+            }
+```
+
+### Search Performance & Optimization
+
+The service includes performance optimizations:
+
+```python
+class BM25SearchOptimizer:
+    """Optimizes search performance and relevance."""
+    
+    def __init__(self):
+        self.boost_weights = {
+            "subject": 2.0,
+            "content": 1.0,
+            "from_addr": 1.5,
+            "thread_id": 0.8
+        }
+    
+    def optimize_query(self, query: str, filters: Dict[str, Any]) -> Dict[str, Any]:
+        """Optimize search query for better relevance."""
+        # Apply field boosting
+        boosted_fields = []
+        for field, boost in self.boost_weights.items():
+            boosted_fields.append(f"{field}^{boost}")
+        
+        # Build optimized search body
+        search_body = {
+            "query": {
+                "bool": {
+                    "should": [
+                        {
+                            "multi_match": {
+                                "query": query,
+                                "fields": boosted_fields,
+                                "type": "best_fields",
+                                "fuzziness": "AUTO",
+                                "minimum_should_match": "75%"
+                            }
+                        },
+                        {
+                            "multi_match": {
+                                "query": query,
+                                "fields": boosted_fields,
+                                "type": "phrase_prefix",
+                                "boost": 0.5
+                            }
+                        }
+                    ]
+                }
+            },
+            "aggs": {
+                "thread_groups": {
+                    "terms": {
+                        "field": "thread_id",
+                        "size": 10
+                    }
+                },
+                "date_ranges": {
+                    "date_range": {
+                        "field": "sent_at",
+                        "ranges": [
+                            {"from": "now-1d", "to": "now"},
+                            {"from": "now-7d", "to": "now-1d"},
+                            {"from": "now-30d", "to": "now-7d"}
+                        ]
+                    }
+                }
+            }
+        }
+        
+        return search_body
+```
+
+### Integration with Ingestion Pipeline
+
+The BM25 service integrates with the existing ingestion pipeline:
+
+```python
+class BM25IngestionHook:
+    """Hooks into ingestion pipeline to index new content."""
+    
+    async def on_chunk_created(self, chunk: Chunk, email: Email) -> bool:
+        """Index new chunk when created during ingestion."""
+        try:
+            # Prepare document for indexing
+            doc = {
+                "tenant_id": chunk.tenant_id,
+                "email_id": chunk.email_id,
+                "chunk_id": chunk.chunk_id,
+                "thread_id": email.thread_id,
+                "subject": email.subject or "",
+                "content": chunk.content,
+                "from_addr": email.from_addr or "",
+                "to_addrs": email.to_addrs or [],
+                "sent_at": email.sent_at.isoformat() if email.sent_at else None,
+                "has_attachments": email.has_attachments,
+                "attachment_types": self._extract_attachment_types(email),
+                "chunk_uid": chunk.chunk_uid,
+                "token_count": chunk.token_count,
+                "created_at": chunk.created_at.isoformat()
+            }
+            
+            # Index document
+            success = await self.search_service.index_document(
+                chunk.tenant_id, 
+                chunk.chunk_id, 
+                doc
+            )
+            
+            if success:
+                logger.info("Chunk indexed successfully", 
+                           chunk_id=chunk.chunk_id, 
+                           tenant_id=chunk.tenant_id)
+            else:
+                logger.error("Failed to index chunk", 
+                           chunk_id=chunk.chunk_id, 
+                           tenant_id=chunk.tenant_id)
+            
+            return success
+            
+        except Exception as e:
+            logger.error("Error indexing chunk", 
+                        chunk_id=chunk.chunk_id, 
+                        error=str(e))
+            return False
+    
+    def _extract_attachment_types(self, email: Email) -> List[str]:
+        """Extract attachment types for filtering."""
+        if not email.attachments:
+            return []
+        
+        types = []
+        for attachment in email.attachments:
+            if attachment.mimetype:
+                main_type = attachment.mimetype.split('/')[0]
+                if main_type not in types:
+                    types.append(main_type)
+        
+        return types
+```
+
+---
+
+**Generated on 2025-08-16 19:15 PDT**
+
+**Repo commit hash**: `9fc42a7`
 
 **Analysis Scope**: Complete codebase analysis with focus on EARS compliance, implementation status, and roadmap planning
