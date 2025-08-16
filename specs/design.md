@@ -2191,7 +2191,8 @@ class ReciprocalRankFusion:
         self.weight_bm25 = weight_bm25
         self.weight_vector = weight_vector
     
-    def fuse_results(self, bm25_results: List[Dict], vector_results: List[Dict]) -> List[Dict]:
+    def fuse_results(self, bm25_results: List[SearchResult], vector_results: List[SearchResult], 
+                     k: int = 60) -> List[SearchResult]:
         """Fuse BM25 and vector search results using RRF."""
         # Create document ID to rank mapping
         bm25_ranks = {doc["citations"]["chunk_id"]: i for i, doc in enumerate(bm25_results)}
@@ -2573,5 +2574,609 @@ class FusionMetrics:
 **Generated on 2025-08-16 19:15 PDT**
 
 **Repo commit hash**: `33ec275`
+
+**Analysis Scope**: Complete codebase analysis with focus on EARS compliance, implementation status, and roadmap planning
+
+## Draft Flow (LangGraph) Design
+
+### Workflow Architecture
+
+The draft orchestration uses LangGraph with a linear workflow of specialized sub-agents:
+
+```python
+class DraftWorkflowState:
+    """State for the draft workflow with patch-only updates."""
+    
+    def __init__(self, tenant_id: str, email_id: str, query: str):
+        self.tenant_id: str = tenant_id
+        self.email_id: str = email_id
+        self.query: str = query
+        self.current_step: str = "coordinator"
+        self.step_results: Dict[str, Any] = {}
+        self.final_draft: Optional[str] = None
+        self.citations: List[Dict[str, Any]] = []
+        self.validation_errors: List[str] = []
+        self.created_at: datetime = datetime.now()
+        self.updated_at: datetime = datetime.now()
+        self.token_count: int = 0
+        self.cost_estimate: float = 0.0
+    
+    def patch(self, **updates) -> 'DraftWorkflowState':
+        """Create new state with updates (immutable updates)."""
+        return dataclasses.replace(self, **updates, updated_at=datetime.now())
+
+
+class DraftWorkflow:
+    """LangGraph workflow for orchestrating draft generation."""
+    
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.graph = self._build_graph()
+    
+    def _build_graph(self) -> StateGraph:
+        """Build the LangGraph workflow."""
+        workflow = StateGraph(DraftWorkflowState)
+        
+        # Add nodes for each sub-agent
+        workflow.add_node("coordinator", self._coordinator_node)
+        workflow.add_node("analyzer", self._analyzer_node)
+        workflow.add_node("retriever", self._retriever_node)
+        workflow.add_node("numeric_verifier", self._numeric_verifier_node)
+        workflow.add_node("drafter", self._drafter_node)
+        workflow.add_node("compliance_guard", self._compliance_guard_node)
+        workflow.add_node("eval_gate", self._eval_gate_node)
+        
+        # Define the linear workflow
+        workflow.set_entry_point("coordinator")
+        workflow.add_edge("coordinator", "analyzer")
+        workflow.add_edge("analyzer", "retriever")
+        workflow.add_edge("retriever", "numeric_verifier")
+        workflow.add_edge("numeric_verifier", "drafter")
+        workflow.add_edge("drafter", "compliance_guard")
+        workflow.add_edge("compliance_guard", "eval_gate")
+        workflow.add_edge("eval_gate", END)
+        
+        return workflow.compile()
+    
+    async def _coordinator_node(self, state: DraftWorkflowState) -> DraftWorkflowState:
+        """Coordinate the draft workflow and set initial parameters."""
+        try:
+            # Analyze the query and set workflow parameters
+            analysis = await self._analyze_query(state.query)
+            
+            # Set workflow configuration
+            step_results = {
+                "coordinator": {
+                    "query_analysis": analysis,
+                    "workflow_config": {
+                        "max_tokens": self.config.get("max_tokens", 1000),
+                        "temperature": self.config.get("temperature", 0.7),
+                        "style": analysis.get("style", "professional"),
+                        "tone": analysis.get("tone", "neutral")
+                    }
+                }
+            }
+            
+            return state.patch(
+                current_step="analyzer",
+                step_results=step_results
+            )
+            
+        except Exception as e:
+            logger.error("Coordinator failed", error=str(e), tenant_id=state.tenant_id)
+            return state.patch(
+                validation_errors=state.validation_errors + [f"Coordinator error: {str(e)}"]
+            )
+    
+    async def _analyzer_node(self, state: DraftWorkflowState) -> DraftWorkflowState:
+        """Analyze the email context and requirements."""
+        try:
+            # Get email context
+            email_context = await self._get_email_context(state.email_id, state.tenant_id)
+            
+            # Analyze requirements
+            requirements = await self._analyze_requirements(state.query, email_context)
+            
+            step_results = state.step_results.copy()
+            step_results["analyzer"] = {
+                "email_context": email_context,
+                "requirements": requirements,
+                "key_points": requirements.get("key_points", []),
+                "constraints": requirements.get("constraints", [])
+            }
+            
+            return state.patch(
+                current_step="retriever",
+                step_results=step_results
+            )
+            
+        except Exception as e:
+            logger.error("Analyzer failed", error=str(e), tenant_id=state.tenant_id)
+            return state.patch(
+                validation_errors=state.validation_errors + [f"Analyzer error: {str(e)}"]
+            )
+    
+    async def _retriever_node(self, state: DraftWorkflowState) -> DraftWorkflowState:
+        """Retrieve relevant information using hybrid search."""
+        try:
+            # Perform hybrid search
+            search_results = await self._hybrid_search(
+                state.tenant_id,
+                state.query,
+                size=10
+            )
+            
+            # Extract and validate citations
+            citations = self._extract_citations(search_results)
+            
+            step_results = state.step_results.copy()
+            step_results["retriever"] = {
+                "search_results": search_results,
+                "citations": citations,
+                "total_hits": search_results["hits"]["total"]["value"]
+            }
+            
+            return state.patch(
+                current_step="numeric_verifier",
+                step_results=step_results,
+                citations=citations
+            )
+            
+        except Exception as e:
+            logger.error("Retriever failed", error=str(e), tenant_id=state.tenant_id)
+            return state.patch(
+                validation_errors=state.validation_errors + [f"Retriever error: {str(e)}"]
+            )
+    
+    async def _numeric_verifier_node(self, state: DraftWorkflowState) -> DraftWorkflowState:
+        """Verify numeric claims and reject ungrounded numerics."""
+        try:
+            # Extract numeric claims from query and context
+            numeric_claims = self._extract_numeric_claims(state.query, state.step_results)
+            
+            # Verify against retrieved documents
+            verified_claims = []
+            rejected_claims = []
+            
+            for claim in numeric_claims:
+                if await self._verify_numeric_claim(claim, state.citations):
+                    verified_claims.append(claim)
+                else:
+                    rejected_claims.append(claim)
+            
+            step_results = state.step_results.copy()
+            step_results["numeric_verifier"] = {
+                "verified_claims": verified_claims,
+                "rejected_claims": rejected_claims,
+                "verification_confidence": len(verified_claims) / len(numeric_claims) if numeric_claims else 1.0
+            }
+            
+            # Add rejected claims to validation errors
+            validation_errors = state.validation_errors.copy()
+            for claim in rejected_claims:
+                validation_errors.append(f"Unverified numeric claim: {claim['text']}")
+            
+            return state.patch(
+                current_step="drafter",
+                step_results=step_results,
+                validation_errors=validation_errors
+            )
+            
+        except Exception as e:
+            logger.error("Numeric verifier failed", error=str(e), tenant_id=state.tenant_id)
+            return state.patch(
+                validation_errors=state.validation_errors + [f"Numeric verifier error: {str(e)}"]
+            )
+    
+    async def _drafter_node(self, state: DraftWorkflowState) -> DraftWorkflowState:
+        """Generate the draft response using LLM."""
+        try:
+            # Prepare prompt with context and citations
+            prompt = self._build_draft_prompt(state)
+            
+            # Generate draft
+            draft_response = await self._generate_draft(prompt, state)
+            
+            step_results = state.step_results.copy()
+            step_results["drafter"] = {
+                "prompt": prompt,
+                "draft_response": draft_response,
+                "token_count": draft_response.get("token_count", 0),
+                "cost_estimate": draft_response.get("cost_estimate", 0.0)
+            }
+            
+            return state.patch(
+                current_step="compliance_guard",
+                step_results=step_results,
+                final_draft=draft_response.get("content", ""),
+                token_count=draft_response.get("token_count", 0),
+                cost_estimate=draft_response.get("cost_estimate", 0.0)
+            )
+            
+        except Exception as e:
+            logger.error("Drafter failed", error=str(e), tenant_id=state.tenant_id)
+            return state.patch(
+                validation_errors=state.validation_errors + [f"Drafter error: {str(e)}"]
+            )
+    
+    async def _compliance_guard_node(self, state: DraftWorkflowState) -> DraftWorkflowState:
+        """Check draft compliance with policies and guidelines."""
+        try:
+            # Check compliance rules
+            compliance_checks = await self._check_compliance(state.final_draft, state.tenant_id)
+            
+            step_results = state.step_results.copy()
+            step_results["compliance_guard"] = {
+                "compliance_checks": compliance_checks,
+                "policy_violations": compliance_checks.get("violations", []),
+                "compliance_score": compliance_checks.get("score", 0.0)
+            }
+            
+            # Add compliance violations to validation errors
+            validation_errors = state.validation_errors.copy()
+            for violation in compliance_checks.get("violations", []):
+                validation_errors.append(f"Compliance violation: {violation['description']}")
+            
+            return state.patch(
+                current_step="eval_gate",
+                step_results=step_results,
+                validation_errors=validation_errors
+            )
+            
+        except Exception as e:
+            logger.error("Compliance guard failed", error=str(e), tenant_id=state.tenant_id)
+            return state.patch(
+                validation_errors=state.validation_errors + [f"Compliance guard error: {str(e)}"]
+            )
+    
+    async def _eval_gate_node(self, state: DraftWorkflowState) -> DraftWorkflowState:
+        """Final evaluation gate for quality and safety."""
+        try:
+            # Run evaluation checks
+            evaluation = await self._run_evaluation(state)
+            
+            step_results = state.step_results.copy()
+            step_results["eval_gate"] = {
+                "evaluation": evaluation,
+                "overall_score": evaluation.get("overall_score", 0.0),
+                "passed": evaluation.get("passed", False)
+            }
+            
+            return state.patch(
+                current_step="completed",
+                step_results=step_results
+            )
+            
+        except Exception as e:
+            logger.error("Eval gate failed", error=str(e), tenant_id=state.tenant_id)
+            return state.patch(
+                validation_errors=state.validation_errors + [f"Eval gate error: {str(e)}"]
+            )
+```
+
+### Sub-Agent Implementations
+
+Each sub-agent has specific responsibilities:
+
+```python
+class QueryAnalyzer:
+    """Analyzes user queries to determine requirements and constraints."""
+    
+    async def analyze_query(self, query: str) -> Dict[str, Any]:
+        """Analyze query for intent, style, and requirements."""
+        # Use LLM to analyze query
+        analysis_prompt = f"""
+        Analyze the following email query and extract:
+        1. Intent (what the user wants)
+        2. Style (formal, casual, technical)
+        3. Tone (professional, friendly, urgent)
+        4. Key requirements
+        5. Constraints or limitations
+        
+        Query: {query}
+        
+        Provide your analysis in JSON format.
+        """
+        
+        response = await self._llm_call(analysis_prompt)
+        return json.loads(response)
+    
+    def _extract_style_indicators(self, query: str) -> Dict[str, Any]:
+        """Extract style indicators from query text."""
+        style_indicators = {
+            "formal": ["please", "kindly", "would you", "could you"],
+            "casual": ["hey", "hi", "thanks", "cool"],
+            "technical": ["implement", "configure", "deploy", "optimize"],
+            "urgent": ["asap", "urgent", "immediately", "critical"]
+        }
+        
+        detected_styles = {}
+        for style, indicators in style_indicators.items():
+            count = sum(1 for indicator in indicators if indicator.lower() in query.lower())
+            if count > 0:
+                detected_styles[style] = count
+        
+        return detected_styles
+
+
+class NumericVerifier:
+    """Verifies numeric claims against retrieved documents."""
+    
+    async def verify_numeric_claim(self, claim: Dict[str, Any], citations: List[Dict]) -> bool:
+        """Verify if a numeric claim is supported by citations."""
+        claim_text = claim["text"]
+        claim_value = claim["value"]
+        claim_unit = claim.get("unit", "")
+        
+        # Search for supporting evidence in citations
+        supporting_evidence = []
+        
+        for citation in citations:
+            if self._contains_numeric_evidence(citation, claim_value, claim_unit):
+                supporting_evidence.append(citation)
+        
+        # Require at least one supporting citation
+        return len(supporting_evidence) > 0
+    
+    def _contains_numeric_evidence(self, citation: Dict, value: Any, unit: str) -> bool:
+        """Check if citation contains supporting numeric evidence."""
+        content = citation.get("content", "")
+        
+        # Look for numeric patterns
+        numeric_patterns = [
+            rf"{value}\s*{unit}",  # Exact value with unit
+            rf"{value}",           # Exact value
+            rf"approximately\s*{value}",  # Approximate value
+            rf"around\s*{value}"          # Around value
+        ]
+        
+        for pattern in numeric_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                return True
+        
+        return False
+    
+    def extract_numeric_claims(self, text: str) -> List[Dict[str, Any]]:
+        """Extract numeric claims from text."""
+        # Simple numeric extraction (in production, use more sophisticated NLP)
+        numeric_pattern = r'(\d+(?:\.\d+)?)\s*([a-zA-Z%$€£¥]+)?'
+        matches = re.findall(numeric_pattern, text)
+        
+        claims = []
+        for match in matches:
+            value, unit = match
+            claims.append({
+                "text": f"{value} {unit}".strip(),
+                "value": float(value),
+                "unit": unit or "",
+                "confidence": 0.8
+            })
+        
+        return claims
+
+
+class ComplianceGuard:
+    """Checks draft compliance with policies and guidelines."""
+    
+    def __init__(self, tenant_id: str):
+        self.tenant_id = tenant_id
+        self.policies = self._load_policies()
+    
+    async def check_compliance(self, draft: str) -> Dict[str, Any]:
+        """Check draft against compliance policies."""
+        violations = []
+        compliance_score = 100.0
+        
+        # Check for sensitive information
+        if self._contains_sensitive_info(draft):
+            violations.append({
+                "type": "sensitive_info",
+                "description": "Draft contains potentially sensitive information",
+                "severity": "high"
+            })
+            compliance_score -= 30
+        
+        # Check for inappropriate language
+        if self._contains_inappropriate_language(draft):
+            violations.append({
+                "type": "inappropriate_language",
+                "description": "Draft contains inappropriate language",
+                "severity": "medium"
+            })
+            compliance_score -= 20
+        
+        # Check for policy violations
+        policy_violations = self._check_policy_violations(draft)
+        violations.extend(policy_violations)
+        compliance_score -= len(policy_violations) * 10
+        
+        return {
+            "violations": violations,
+            "score": max(0.0, compliance_score),
+            "passed": compliance_score >= 70.0
+        }
+    
+    def _contains_sensitive_info(self, text: str) -> bool:
+        """Check for sensitive information patterns."""
+        sensitive_patterns = [
+            r'\b\d{3}-\d{2}-\d{4}\b',  # SSN
+            r'\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b',  # Credit card
+            r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',  # Email
+            r'\b\d{3}[\s-]?\d{3}[\s-]?\d{4}\b'  # Phone number
+        ]
+        
+        for pattern in sensitive_patterns:
+            if re.search(pattern, text):
+                return True
+        
+        return False
+    
+    def _contains_inappropriate_language(self, text: str) -> bool:
+        """Check for inappropriate language."""
+        inappropriate_words = [
+            "inappropriate", "unprofessional", "offensive"
+        ]
+        
+        text_lower = text.lower()
+        for word in inappropriate_words:
+            if word in text_lower:
+                return True
+        
+        return False
+    
+    def _check_policy_violations(self, text: str) -> List[Dict[str, Any]]:
+        """Check for specific policy violations."""
+        violations = []
+        
+        # Check for specific policy keywords
+        policy_keywords = {
+            "confidentiality": ["confidential", "secret", "private"],
+            "financial": ["price", "cost", "budget", "payment"],
+            "legal": ["legal", "law", "contract", "agreement"]
+        }
+        
+        for policy, keywords in policy_keywords.items():
+            if any(keyword in text.lower() for keyword in keywords):
+                violations.append({
+                    "type": "policy_violation",
+                    "description": f"Content may require {policy} review",
+                    "severity": "low"
+                })
+        
+        return violations
+```
+
+### Streaming Output
+
+The workflow supports streaming output via Server-Sent Events:
+
+```python
+class DraftStreamingService:
+    """Handles streaming output for draft generation."""
+    
+    def __init__(self, workflow: DraftWorkflow):
+        self.workflow = workflow
+    
+    async def stream_draft(self, tenant_id: str, email_id: str, query: str) -> AsyncGenerator[str, None]:
+        """Stream draft generation progress."""
+        try:
+            # Initialize workflow state
+            initial_state = DraftWorkflowState(tenant_id, email_id, query)
+            
+            # Stream workflow execution
+            async for event in self.workflow.astream(initial_state):
+                if event["type"] == "on_chain_start":
+                    yield f"data: {json.dumps({'type': 'step_start', 'step': event['name']})}\n\n"
+                
+                elif event["type"] == "on_chain_end":
+                    step_result = event["outputs"]["step_results"].get(event["name"], {})
+                    yield f"data: {json.dumps({'type': 'step_complete', 'step': event['name'], 'result': step_result})}\n\n"
+                
+                elif event["type"] == "on_chain_error":
+                    error_msg = f"Error in step {event['name']}: {event['error']}"
+                    yield f"data: {json.dumps({'type': 'error', 'step': event['name'], 'error': error_msg})}\n\n"
+            
+            # Send completion event
+            final_state = await self.workflow.ainvoke(initial_state)
+            yield f"data: {json.dumps({'type': 'complete', 'draft': final_state.final_draft, 'citations': final_state.citations})}\n\n"
+            
+        except Exception as e:
+            error_msg = f"Workflow execution failed: {str(e)}"
+            yield f"data: {json.dumps({'type': 'error', 'error': error_msg})}\n\n"
+    
+    async def get_draft_status(self, workflow_id: str) -> Dict[str, Any]:
+        """Get the status of a draft workflow."""
+        # Implementation for status tracking
+        pass
+```
+
+### State Contract Compliance
+
+The workflow strictly follows the state contract pattern:
+
+### Draft Flow Integrations
+
+**Retriever Interface**
+- `RetrieverAdapter` provides unified interface for hybrid search
+- Fallback to SQL text search when vector/BM25 unavailable
+- Returns `CitationItem[]` with metadata and relevance scores
+- Tenant isolation enforced at query level
+
+**LLM Client Integration**
+- Config-driven provider selection (`models.llm.provider`)
+- Streaming token generation with real-time updates
+- Context window management with citation truncation
+- Cost tracking and token counting
+
+**Evaluation Rubric**
+- Grounding: Citation usage and source verification
+- Completeness: Query coverage and detail level
+- Tone: Professional communication standards
+- Policy: Compliance and security checks
+- Fail-closed enforcement in dev-mode
+
+**Audit Schema**
+- Step timings and execution order
+- Patch keys and values for each step
+- Citation usage and retrieval results
+- Performance metrics and resource usage
+- JSON exportable for compliance and debugging
+
+```python
+class StatePatch(TypedDict):
+    """Patch for updating workflow state."""
+    current_step: Optional[str]
+    step_results: Optional[Dict[str, Any]]
+    final_draft: Optional[str]
+    citations: Optional[List[Dict[str, Any]]]
+    validation_errors: Optional[List[str]]
+    token_count: Optional[int]
+    cost_estimate: Optional[float]
+
+
+def apply_state_patch(state: DraftWorkflowState, patch: StatePatch) -> DraftWorkflowState:
+    """Apply a patch to workflow state (immutable update)."""
+    return state.patch(**patch)
+
+
+class WorkflowMetrics:
+    """Metrics collection for workflow performance."""
+    
+    def __init__(self):
+        self.step_times = defaultdict(list)
+        self.total_times = []
+        self.error_counts = defaultdict(int)
+        self.success_counts = defaultdict(int)
+    
+    def record_step(self, step_name: str, duration: float, success: bool):
+        """Record step performance metrics."""
+        self.step_times[step_name].append(duration)
+        
+        if success:
+            self.success_counts[step_name] += 1
+        else:
+            self.error_counts[step_name] += 1
+    
+    def get_workflow_stats(self) -> Dict[str, Any]:
+        """Get workflow performance statistics."""
+        stats = {}
+        
+        for step_name in self.step_times:
+            times = self.step_times[step_name]
+            if times:
+                stats[step_name] = {
+                    "avg_time": sum(times) / len(times),
+                    "p95_time": sorted(times)[int(len(times) * 0.95)],
+                    "success_rate": self.success_counts[step_name] / (self.success_counts[step_name] + self.error_counts[step_name])
+                }
+        
+        return stats
+```
+
+---
+
+**Generated on 2025-08-16 19:15 PDT**
+
+**Repo commit hash**: `272794c`
 
 **Analysis Scope**: Complete codebase analysis with focus on EARS compliance, implementation status, and roadmap planning

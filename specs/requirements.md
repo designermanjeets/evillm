@@ -197,6 +197,50 @@ The Logistics Email AI system processes incoming logistics emails to provide int
 - And: Evaluation uses promptfoo/LangSmith integration
 - And: Evaluation results are logged and tracked
 
+### EARS-AGT-4: RetrieverAdapter
+**THE SYSTEM SHALL** return top-k results with `citation_items[]` (email_id|attachment_id, chunk_uid, object_key, score).
+
+**Acceptance Criteria:**
+- Given: A search query is submitted
+- When: Retrieval is performed
+- Then: Top-k results are returned with citation metadata
+- And: Each citation includes email_id, chunk_uid, object_key, and relevance score
+- And: Results are deterministic and repeatable
+- And: Fallback to SQL text search when vector/BM25 unavailable
+
+### EARS-AGT-5: Draft Node Citations
+**THE SYSTEM SHALL** stream tokens and attach `used_citations[]` in final patch.
+
+**Acceptance Criteria:**
+- Given: A draft is generated
+- When: LLM generates response
+- Then: Tokens are streamed in real-time
+- And: Final state includes used_citations array
+- And: Citations are linked to source chunks
+- And: Token count and cost are tracked
+
+### EARS-AGT-6: EvalGate Fail-Closed
+**THE SYSTEM SHALL** block ungrounded outputs in dev-mode and return rubric scores.
+
+**Acceptance Criteria:**
+- Given: A draft is completed
+- When: Evaluation is performed in dev-mode
+- Then: Grounding, completeness, tone, and policy are scored
+- And: Ungrounded drafts are rejected
+- And: Rubric scores are returned in state
+- And: Fail-closed policy is enforced
+
+### EARS-AGT-7: Audit Trace Export
+**THE SYSTEM SHALL** be exportable (JSON) with step timings & patch keys.
+
+**Acceptance Criteria:**
+- Given: A workflow completes
+- When: Audit trace is requested
+- Then: JSON export includes step timings
+- And: Patch keys and values are recorded
+- And: Citation usage is tracked
+- And: Performance metrics are included
+
 ### EARS-UI-1: Demo UI Core
 **THE SYSTEM SHALL** provide a demo UI to upload docs, run search with citations, and stream agent drafts **WITH** tenant selection.
 

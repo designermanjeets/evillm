@@ -290,12 +290,18 @@ This document outlines the ordered, atomic tasks required to implement the Logis
 **Status**: OPEN
 
 **Subtasks**:
-- TASK-8.1: LangGraph draft orchestration + streaming endpoint
-- TASK-8.2: Core sub-agents implementation
-- TASK-8.3: Numeric verification tools
-- TASK-8.4: Eval gate wiring (promptfoo/LangSmith hooks)
-- TASK-8.5: Streaming and real-time output
-- TASK-8.6: Tests and error handling
+- TASK-8.1: LangGraph draft orchestration + streaming endpoint ✅
+- TASK-8.2: Core sub-agents implementation ✅
+- TASK-8.3: Numeric verification tools ✅
+- TASK-8.4: Eval gate wiring (promptfoo/LangSmith hooks) ⚠️
+- TASK-8.5: Streaming and real-time output ✅
+- TASK-8.6: Tests and error handling ✅
+
+**Phase A1 Micro-Tasks**:
+- A1.1: RetrieverAdapter + Citations ⚠️
+- A1.2: LLMClient + Draft node (streaming) ⚠️
+- A1.3: EvalGate (dev-mode) + fail-closed policy ⚠️
+- A1.4: Audit Trace export + metrics/counters ⚠️
 
 ### TASK-9: Demo UI & User Experience
 **Goal**: Create demo UI for upload, search, and draft functionality

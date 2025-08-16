@@ -199,6 +199,24 @@ class ConfigManager:
         
         return False
     
+    def get(self, key: str, default: Any = None) -> Any:
+        """Get configuration value by dot-notation key."""
+        config = self.load_config()
+        
+        # Split key by dots (e.g., "retriever.fallback_enabled")
+        keys = key.split('.')
+        value = config
+        
+        try:
+            for k in keys:
+                if isinstance(value, dict) and k in value:
+                    value = value[k]
+                else:
+                    return default
+            return value
+        except (KeyError, AttributeError):
+            return default
+    
     def reload(self):
         """Reload configuration from disk."""
         self._config = None
