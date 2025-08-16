@@ -1549,3 +1549,220 @@ graph.policy_violations: int  # Banned key attempts
 - All patches maintain tenant context
 - No cross-tenant data leakage possible
 - Tenant boundaries enforced at patch level
+
+## Embedding Worker Design
+
+### Queue & Table Schema
+
+The embedding worker uses a database-backed queue with the following schema:
+
+```sql
+-- Embedding jobs queue
+CREATE TABLE embedding_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id),
+    chunk_id UUID NOT NULL REFERENCES chunks(id),
+    email_id UUID NOT NULL REFERENCES emails(id),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+    priority INTEGER NOT NULL DEFAULT 0,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    max_retries INTEGER NOT NULL DEFAULT 3,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    error_message TEXT,
+    embedding_vector VECTOR(1536), -- OpenAI text-embedding-3-large dimensions
+    metadata JSONB NOT NULL DEFAULT '{}'
+);
+
+-- Indexes for performance
+CREATE INDEX idx_embedding_jobs_tenant_status ON embedding_jobs(tenant_id, status);
+CREATE INDEX idx_embedding_jobs_priority_created ON embedding_jobs(priority DESC, created_at ASC);
+CREATE INDEX idx_embedding_jobs_retry_count ON embedding_jobs(retry_count, status) WHERE status = 'failed';
+```
+
+### Batcher & Retry Logic
+
+The embedding worker implements intelligent batching with exponential backoff:
+
+```python
+class EmbeddingBatcher:
+    def __init__(self, batch_size: int = 64, max_wait_time: float = 5.0):
+        self.batch_size = batch_size
+        self.max_wait_time = max_wait_time
+        self.current_batch = []
+        self.last_batch_time = time.time()
+    
+    async def add_job(self, job: EmbeddingJob) -> bool:
+        """Add job to current batch, return True if batch is ready."""
+        self.current_batch.append(job)
+        
+        # Check if batch is ready
+        if len(self.current_batch) >= self.batch_size:
+            return True
+        
+        # Check if max wait time exceeded
+        if time.time() - self.last_batch_time >= self.max_wait_time:
+            return True
+        
+        return False
+    
+    def get_batch(self) -> List[EmbeddingJob]:
+        """Get current batch and reset."""
+        batch = self.current_batch.copy()
+        self.current_batch = []
+        self.last_batch_time = time.time()
+        return batch
+```
+
+**Retry Matrix**:
+- **Attempt 1**: Immediate retry
+- **Attempt 2**: 1 second delay + jitter
+- **Attempt 3**: 2 second delay + jitter
+- **Attempt 4+**: Exponential backoff (4s, 8s, 16s) + jitter
+
+### Provider-Agnostic Client
+
+The embedding service supports multiple providers through a common interface:
+
+```python
+from abc import ABC, abstractmethod
+from typing import List, Dict, Any
+
+class EmbeddingProvider(ABC):
+    @abstractmethod
+    async def embed_batch(self, texts: List[str], **kwargs) -> List[List[float]]:
+        """Embed a batch of texts, return vectors."""
+        pass
+    
+    @abstractmethod
+    async def get_embedding_dimensions(self) -> int:
+        """Return embedding dimensions for this provider."""
+        pass
+
+class OpenAIEmbeddingProvider(EmbeddingProvider):
+    def __init__(self, api_key: str, model: str = "text-embedding-3-large"):
+        self.client = AsyncOpenAI(api_key=api_key)
+        self.model = model
+    
+    async def embed_batch(self, texts: List[str], **kwargs) -> List[List[float]]:
+        """Embed texts using OpenAI API with batching."""
+        try:
+            response = await self.client.embeddings.create(
+                model=self.model,
+                input=texts
+            )
+            return [data.embedding for data in response.data]
+        except Exception as e:
+            logger.error("OpenAI embedding failed", error=str(e), batch_size=len(texts))
+            raise
+```
+
+### Cost Guards & Rate Limiting
+
+The embedding service includes cost controls and rate limiting:
+
+```python
+class EmbeddingCostGuard:
+    def __init__(self, max_cost_per_day: float = 100.0):
+        self.max_cost_per_day = max_cost_per_day
+        self.daily_cost = 0.0
+        self.last_reset = datetime.now().date()
+    
+    def check_cost_limit(self, estimated_cost: float) -> bool:
+        """Check if operation would exceed daily cost limit."""
+        self._reset_if_new_day()
+        
+        if self.daily_cost + estimated_cost > self.max_cost_per_day:
+            logger.warning("Daily cost limit exceeded", 
+                         daily_cost=self.daily_cost, 
+                         estimated_cost=estimated_cost)
+            return False
+        
+        return True
+    
+    def record_cost(self, actual_cost: float):
+        """Record actual cost of embedding operation."""
+        self.daily_cost += actual_cost
+        logger.info("Cost recorded", actual_cost=actual_cost, daily_total=self.daily_cost)
+```
+
+### Vector Upsert with Tenant Namespace
+
+The vector storage service enforces tenant isolation:
+
+```python
+class VectorStoreService:
+    def __init__(self, provider: str, collection_prefix: str = "chunks"):
+        self.provider = provider
+        self.collection_prefix = collection_prefix
+    
+    def _get_collection_name(self, tenant_id: str) -> str:
+        """Generate tenant-scoped collection name."""
+        return f"{self.collection_prefix}_{tenant_id}"
+    
+    async def upsert_vectors(self, tenant_id: str, vectors: List[Dict[str, Any]]) -> bool:
+        """Upsert vectors to tenant-scoped collection."""
+        collection_name = self._get_collection_name(tenant_id)
+        
+        try:
+            # Provider-specific upsert logic
+            if self.provider == "qdrant":
+                return await self._qdrant_upsert(collection_name, vectors)
+            elif self.provider == "pinecone":
+                return await self._pinecone_upsert(collection_name, vectors)
+            else:
+                raise ValueError(f"Unsupported vector provider: {self.provider}")
+        except Exception as e:
+            logger.error("Vector upsert failed", 
+                        tenant_id=tenant_id, 
+                        provider=self.provider, 
+                        error=str(e))
+            raise
+```
+
+### Health Monitoring & Metrics
+
+The embedding service provides comprehensive monitoring:
+
+```python
+class EmbeddingMetrics:
+    def __init__(self):
+        self.jobs_processed = 0
+        self.jobs_failed = 0
+        self.embeddings_generated = 0
+        self.provider_latency = []
+        self.batch_sizes = []
+        self.cost_tracking = 0.0
+    
+    def record_job_completion(self, success: bool, latency: float, batch_size: int):
+        """Record job completion metrics."""
+        if success:
+            self.jobs_processed += 1
+            self.embeddings_generated += batch_size
+        else:
+            self.jobs_failed += 1
+        
+        self.provider_latency.append(latency)
+        self.batch_sizes.append(batch_size)
+    
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get current health status."""
+        return {
+            "jobs_processed": self.jobs_processed,
+            "jobs_failed": self.jobs_failed,
+            "success_rate": self.jobs_processed / (self.jobs_processed + self.jobs_failed) if (self.jobs_processed + self.jobs_failed) > 0 else 0.0,
+            "avg_latency_p95": np.percentile(self.provider_latency, 95) if self.provider_latency else 0.0,
+            "avg_batch_size": np.mean(self.batch_sizes) if self.batch_sizes else 0.0,
+            "daily_cost": self.cost_tracking
+        }
+```
+
+---
+
+**Generated on 2025-08-16 18:30 PDT**
+
+**Repo commit hash**: `ddaf7966e70cc13b92ecfd97bdc5beb0c9d0f48b`
+
+**Analysis Scope**: Complete codebase analysis with focus on EARS compliance, implementation status, and roadmap planning

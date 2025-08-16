@@ -173,7 +173,7 @@ This document outlines the ordered, atomic tasks required to implement the Logis
 ### TASK-5.H: LangGraph State Hardening & Config-Driven OCR Sub-Agents
 **Goal**: Harden LangGraph workflow with explicit state contracts, runtime guards, and config-driven behavior
 **EARS Mapping**: EARS-GRAPH-1, EARS-GRAPH-2, EARS-GRAPH-3, EARS-GRAPH-4, EARS-GRAPH-5
-**Files Touched**:
+**Files Touched**: 
 - `app/agents/state_contract.py`
 - `app/agents/utils.py`
 - `app/agents/ocr_workflow.py`
@@ -204,107 +204,157 @@ This document outlines the ordered, atomic tasks required to implement the Logis
 - TASK-5.H.6: Observability metrics/logs; conflict dashboards
 - TASK-5.H.7: Docs & runbook; commit & sign-off
 
-### TASK-6: Embedding Service
-**Goal**: Implement vector embeddings for semantic search
-**EARS Mapping**: EARS-3
+### TASK-6: Embedding Service & Vector Storage
+**Goal**: Implement embedding service with queue management and vector storage
+**EARS Mapping**: EARS-RET-1, EARS-RET-2
 **Files Touched**:
 - `app/services/embeddings.py`
-- `app/services/chunking.py`
+- `app/services/vector_store/`
+- `app/database/migrations/`
 - `app/config/embeddings.py`
+- `tests/test_embeddings.py`
 
 **Acceptance Criteria**:
-- Semantic chunking with stable chunk_ids
-- OpenAI embedding integration
-- Batch processing with concurrency
-- Metadata enrichment (entities, language)
+- Database-backed embedding job queue
+- Intelligent batching with configurable batch sizes
+- Retry logic with exponential backoff
+- Provider-agnostic embedding interface
+- Vector storage with tenant-scoped namespaces
+- Cost guards and rate limiting
+- Comprehensive monitoring and metrics
 
-**Risks**: API rate limits and costs
+**Risks**: API rate limits, cost management, vector DB performance
 **Dependencies**: TASK-4
 **Status**: OPEN
 
+**Subtasks**:
+- TASK-6.1: Embedding Worker (queue + batcher + retries; vectors upsert) 🔄
+- TASK-6.2: Vector store integration (Qdrant/Pinecone/Weaviate)
+- TASK-6.3: Cost management and rate limiting
+- TASK-6.4: Health monitoring and metrics
+- TASK-6.5: Tests and error handling
+
 ### TASK-7: Hybrid Search Engine
-**Goal**: Implement BM25 + vector search with RRF fusion
-**EARS Mapping**: EARS-3
+**Goal**: Implement BM25 + vector search with RRF fusion and optional reranking
+**EARS Mapping**: EARS-RET-3, EARS-RET-4, EARS-RET-5
 **Files Touched**:
 - `app/services/search/`
-- `app/services/search/bm25_search.py`
-- `app/services/search/vector_search.py`
-- `app/services/search/fusion.py`
-- `app/services/search/reranker.py`
+- `app/services/bm25/`
+- `app/services/fusion.py`
+- `app/services/reranker.py`
+- `tests/test_search.py`
 
 **Acceptance Criteria**:
-- OpenSearch/Elasticsearch integration
-- Vector store integration (Qdrant/Pinecone/Weaviate)
+- OpenSearch/Elasticsearch integration for BM25
+- Vector search with tenant isolation
 - Reciprocal Rank Fusion algorithm
 - Optional cross-encoder reranking
-- Multi-tenant isolation
+- Citation mapping (chunk→email/attachment)
+- Performance metrics and monitoring
 
-**Risks**: Search performance may degrade with large datasets
+**Risks**: Search performance, index management, fusion algorithm tuning
 **Dependencies**: TASK-6
 **Status**: OPEN
 
-### TASK-8: LangGraph Agent Framework
-**Goal**: Implement core agent nodes and coordination logic
-**EARS Mapping**: EARS-11
+**Subtasks**:
+- TASK-7.1: BM25/OpenSearch index + filters + health/aliases
+- TASK-7.2: Vector search integration
+- TASK-7.3: RRF fusion + optional reranker interface
+- TASK-7.4: Citation mapping and metadata
+- TASK-7.5: Performance optimization and monitoring
+
+### TASK-8: LangGraph Draft Agent Framework
+**Goal**: Implement draft flow orchestration with sub-agents and streaming
+**EARS Mapping**: EARS-AGT-1, EARS-AGT-2, EARS-AGT-3
 **Files Touched**:
-- `app/agents/`
+- `app/agents/draft_workflow.py`
 - `app/agents/coordinator.py`
 - `app/agents/query_analyzer.py`
 - `app/agents/retriever.py`
 - `app/agents/numeric_verifier.py`
-- `app/agents/compliance_guard.py`
 - `app/agents/drafter.py`
-- `app/agents/human_gate.py`
+- `app/agents/compliance_guard.py`
+- `tests/test_draft_agents.py`
 
 **Acceptance Criteria**:
-- All agent nodes implemented
-- Deterministic state transitions
-- Token and time budget enforcement
-- Human approval gate integration
+- Coordinator agent with routing logic
+- Query analyzer with intent classification
+- Retriever agent with hybrid search
+- Numeric verifier with deterministic tools
+- Compliance guard with policy enforcement
+- Streaming output via SSE/WebSocket
+- Evaluation gate for dev-mode quality control
 
-**Risks**: Complex agent interactions may cause deadlocks
+**Risks**: Complex agent interactions, streaming complexity, evaluation accuracy
 **Dependencies**: TASK-7
 **Status**: OPEN
 
-### TASK-9: Numeric Computation Tools
-**Goal**: Implement deterministic tools for distance, price, and date calculations
-**EARS Mapping**: EARS-4, EARS-5
+**Subtasks**:
+- TASK-8.1: LangGraph draft orchestration + streaming endpoint
+- TASK-8.2: Core sub-agents implementation
+- TASK-8.3: Numeric verification tools
+- TASK-8.4: Eval gate wiring (promptfoo/LangSmith hooks)
+- TASK-8.5: Streaming and real-time output
+- TASK-8.6: Tests and error handling
+
+### TASK-9: Demo UI & User Experience
+**Goal**: Create demo UI for upload, search, and draft functionality
+**EARS Mapping**: EARS-UI-1, EARS-UI-2
 **Files Touched**:
-- `app/tools/`
-- `app/tools/distance_calculator.py`
-- `app/tools/price_calculator.py`
-- `app/tools/date_calculator.py`
-- `app/config/rate_cards.py`
+- `ui/` (React/Vite or FastAPI Jinja templates)
+- `app/routers/ui.py`
+- `app/static/`
+- `tests/test_ui.py`
 
 **Acceptance Criteria**:
-- Geographic distance calculations
-- Rate card lookups and calculations
-- Date arithmetic and business logic
-- All calculations deterministic and verifiable
+- File upload with drag-and-drop support
+- Tenant selection and isolation
+- Search interface with citations
+- Draft streaming with sub-agent trace
+- Responsive and accessible design
+- Error handling and user feedback
+- Audit trail and export functionality
 
-**Risks**: Rate card accuracy depends on data quality
+**Risks**: UI complexity, real-time updates, cross-browser compatibility
 **Dependencies**: TASK-8
 **Status**: OPEN
 
-### TASK-10: FastAPI Application
-**Goal**: Create FastAPI application with core endpoints
-**EARS Mapping**: EARS-7, EARS-8
+**Subtasks**:
+- TASK-9.1: Demo UI: Upload
+- TASK-9.2: Demo UI: Search + Draft + Trace
+- TASK-9.3: Responsive design and accessibility
+- TASK-9.4: Error handling and user feedback
+- TASK-9.5: Tests and cross-browser validation
+
+### TASK-10: Observability & Monitoring
+**Goal**: Implement comprehensive monitoring and alerting for production
+**EARS Mapping**: EARS-8, EARS-7
 **Files Touched**:
-- `app/main.py`
-- `app/routers/`
-- `app/middleware/`
-- `app/dependencies.py`
+- `app/services/monitoring.py`
+- `app/services/metrics.py`
+- `app/config/monitoring.py`
+- `dashboards/`
+- `alerts/`
 
 **Acceptance Criteria**:
-- POST /draft endpoint implemented
-- POST /eval/run endpoint implemented
-- GET /health endpoint implemented
-- Authentication and rate limiting
-- Structured logging with trace IDs
+- Search performance metrics (hit@k, p95 latency)
+- Agent performance tracking
+- Cost monitoring and alerts
+- Error rate tracking and alerting
+- Business metrics and KPIs
+- Grafana dashboards
+- PagerDuty integration
 
-**Risks**: API design may need iteration based on usage
-**Dependencies**: TASK-8, TASK-9
+**Risks**: Monitoring overhead, alert fatigue, metric accuracy
+**Dependencies**: TASK-9
 **Status**: OPEN
+
+**Subtasks**:
+- TASK-10.1: Observability dashboards & alerts (hit@k, p95, grounding pass)
+- TASK-10.2: Cost monitoring and budget alerts
+- TASK-10.3: Error tracking and incident response
+- TASK-10.4: Business metrics and KPIs
+- TASK-10.5: Integration with monitoring tools
 
 ### TASK-11: Evaluation Framework
 **Goal**: Implement automated evaluation using promptfoo and LangSmith

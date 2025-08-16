@@ -103,6 +103,41 @@ models:
     language_hint: "en"
     tesseract_config: "--oem 3 --psm 6"
 
+# Search Configuration
+search:
+  bm25:
+    enabled: true
+    host: "http://opensearch:9200"
+    index: "emails_v1"
+    filters: ["tenant_id", "thread_id", "sent_at"]
+  
+  vector:
+    enabled: true
+    provider: "qdrant"     # options: qdrant|pinecone|weaviate
+    collection: "chunks_v1"
+  
+  rrf:
+    k: 60
+    weight_bm25: 1.0
+    weight_vector: 1.0
+  
+  reranker:
+    enabled: false
+    provider: "cross-encoder"
+    model: "ms-marco-MiniLM-L-6-v2"
+
+# UI Configuration
+ui:
+  enabled: true
+  authless_demo: true
+  upload:
+    max_file_size_mb: 50
+    allowed_mimetypes: ["application/pdf", "image/jpeg", "image/png", "message/rfc822"]
+  streaming:
+    enabled: true
+    chunk_size: 1024
+    timeout_seconds: 30
+
 # Logging Configuration
 logging:
   level: "INFO"

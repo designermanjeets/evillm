@@ -1,15 +1,25 @@
 """SQLAlchemy 2.0 models for Logistics Email AI database."""
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Any
 from uuid import uuid4
 from sqlalchemy import (
     Column, String, DateTime, Boolean, Integer, BigInteger, Float, 
-    ForeignKey, UniqueConstraint, Index, Text, JSON
+    ForeignKey, UniqueConstraint, Index, Text, JSON, CheckConstraint
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, Mapped, mapped_column, DeclarativeBase
 from sqlalchemy.sql import func
+import uuid
+
+# Import VECTOR from pgvector extension
+try:
+    from pgvector.sqlalchemy import Vector
+    VECTOR = Vector
+except ImportError:
+    # Fallback for environments without pgvector
+    VECTOR = None
 
 
 class Base(DeclarativeBase):
@@ -34,6 +44,7 @@ class Tenant(Base):
     chunks: Mapped[List["Chunk"]] = relationship("Chunk", back_populates="tenant", cascade="all, delete-orphan")
     labels: Mapped[List["Label"]] = relationship("Label", back_populates="tenant", cascade="all, delete-orphan")
     eval_runs: Mapped[List["EvalRun"]] = relationship("EvalRun", back_populates="tenant", cascade="all, delete-orphan")
+    embedding_jobs: Mapped[List["EmbeddingJob"]] = relationship("EmbeddingJob", back_populates="tenant", cascade="all, delete-orphan")
     
     __table_args__ = (
         Index("idx_tenants_name", "name"),
@@ -96,6 +107,7 @@ class Email(Base):
     chunks: Mapped[List["Chunk"]] = relationship("Chunk", back_populates="email", cascade="all, delete-orphan")
     email_labels: Mapped[List["EmailLabel"]] = relationship("EmailLabel", back_populates="email", cascade="all, delete-orphan")
     eval_runs: Mapped[List["EvalRun"]] = relationship("EvalRun", back_populates="email", cascade="all, delete-orphan")
+    embedding_jobs: Mapped[List["EmbeddingJob"]] = relationship("EmbeddingJob", back_populates="email", cascade="all, delete-orphan")
     
     __table_args__ = (
         UniqueConstraint("tenant_id", "message_id", name="uq_emails_tenant_message"),
@@ -153,6 +165,7 @@ class Chunk(Base):
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="chunks")
     email: Mapped["Email"] = relationship("Email", back_populates="chunks")
     attachment: Mapped[Optional["Attachment"]] = relationship("Attachment", back_populates="chunks")
+    embedding_jobs: Mapped[List["EmbeddingJob"]] = relationship("EmbeddingJob", back_populates="chunk", cascade="all, delete-orphan")
     
     __table_args__ = (
         Index("idx_chunks_tenant_email", "tenant_id", "email_id"),
@@ -228,6 +241,51 @@ class EvalRun(Base):
         Index("idx_eval_runs_tenant_email", "tenant_id", "email_id"),
         Index("idx_eval_runs_tenant_created", "tenant_id", "created_at", postgresql_ops={"created_at": "DESC"}),
         Index("idx_eval_runs_tenant_scores", "tenant_id", "score_grounding", "score_completeness", "score_tone", "score_policy"),
+    )
+
+
+class EmbeddingJob(Base):
+    """Embedding job model."""
+    
+    __tablename__ = "embedding_jobs"
+    
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False)
+    chunk_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("chunks.id"), nullable=False)
+    email_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("emails.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    embedding_vector: Mapped[Optional[Any]] = mapped_column(VECTOR(1536) if VECTOR else Text)  # Fallback to Text if VECTOR not available
+    job_metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, default={})
+    
+    # Add constraint for valid status values
+    __table_args__ = (
+        CheckConstraint(
+            status.in_(['pending', 'processing', 'completed', 'failed']),
+            name='valid_embedding_job_status'
+        ),
+    )
+    
+    # Relationships
+    tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="embedding_jobs")
+    chunk: Mapped["Chunk"] = relationship("Chunk", back_populates="embedding_jobs")
+    email: Mapped["Email"] = relationship("Email", back_populates="embedding_jobs")
+    
+    __table_args__ = (
+        Index("idx_embedding_jobs_tenant_chunk", "tenant_id", "chunk_id"),
+        Index("idx_embedding_jobs_tenant_email", "tenant_id", "email_id"),
+        Index("idx_embedding_jobs_tenant_status", "tenant_id", "status"),
+        Index("idx_embedding_jobs_tenant_priority", "tenant_id", "priority"),
+        Index("idx_embedding_jobs_tenant_retry_count", "tenant_id", "retry_count"),
+        Index("idx_embedding_jobs_tenant_started_at", "tenant_id", "started_at"),
+        Index("idx_embedding_jobs_tenant_completed_at", "tenant_id", "completed_at"),
     )
 
 
