@@ -952,6 +952,179 @@ https://bucket.s3.amazonaws.com/tenant_id/path/to/object?X-Amz-Algorithm=AWS4-HM
 - **Capacity**: > 80% bucket utilization
 - **Security**: Unauthorized access attempts
 
+## Attachment Processing & OCR
+
+### OCR Flow Overview
+The OCR system follows a multi-stage processing flow designed for resilience, scalability, and provider-agnostic operation:
+
+```
+Attachment Detected → Text Extractor (DOCX/PDF) → If Empty → OCR Queue → OCR Worker → Store Text → Update DB → Metrics
+```
+
+#### Stage Details
+
+1. **Text Extraction Stage**: Attempt native text extraction from DOCX/PDF documents
+2. **OCR Decision Stage**: If no text extracted, queue for OCR processing
+3. **OCR Queue Stage**: In-process queue with backpressure and metrics
+4. **OCR Worker Stage**: Provider-agnostic OCR processing with timeouts
+5. **Storage Stage**: Write OCR text to object storage with tenant-aware paths
+6. **Database Stage**: Update Attachment.ocr_text_object_key and metrics
+7. **Metrics Stage**: Record OCR performance and success/failure rates
+
+### OCR Backend Architecture
+
+#### Provider Interface
+```python
+class OCRProvider(ABC):
+    @abstractmethod
+    async def extract_text(self, image_bytes: bytes, 
+                          mimetype: str, 
+                          language_hint: Optional[str] = None,
+                          timeout: int = 30) -> OCRResult:
+        pass
+```
+
+#### Backend Implementations
+- **Local Backend (Dev)**: 
+  - Stub implementation for testing
+  - Tesseract integration (feature-flagged)
+  - Image preprocessing (grayscale, binarization)
+- **Cloud Backends (Future)**:
+  - AWS Textract for production PDFs
+  - Google Vision API for images
+  - Azure Computer Vision for mixed content
+
+#### Backend Selection
+- **Development**: Local backend with stub/Tesseract
+- **Staging**: Local + cloud backends for testing
+- **Production**: Cloud backends with local fallback
+
+### Storage Pathing Strategy
+
+#### OCR Text Paths
+```
+tenant_id/yyyy/mm/dd/thread_id/email_id/att/<index>_ocr.txt
+```
+
+#### Path Components
+- **tenant_id**: UUID of the tenant (enforces isolation)
+- **yyyy/mm/dd**: Date-based partitioning for performance
+- **thread_id**: Email thread identifier
+- **email_id**: Individual email identifier
+- **att**: Attachment content type
+- **index**: Attachment index within email
+- **ocr.txt**: OCR text file suffix
+
+### Processing Controls
+
+#### Timeout & Retry Configuration
+- **Per-File Timeout**: Configurable timeout per attachment (default: 30s)
+- **Retry Policy**: Exponential backoff with jitter (tenacity library)
+- **Max Retries**: Configurable retry limit (default: 3)
+- **Backpressure**: Queue size limits and worker concurrency caps
+
+#### Size & Content Limits
+- **File Size Caps**: 
+  - Images: 10MB max
+  - PDFs: 50MB max
+  - DOCX: 25MB max
+- **Page Limits**: 
+  - PDFs: 100 pages max
+  - Images: No page limit
+- **Processing Caps**: 
+  - Max concurrent OCR tasks: 5
+  - Max queue size: 100 tasks
+
+#### Mimetype Allowlist
+- **Allowed Images**: JPEG, PNG, GIF, BMP, TIFF
+- **Allowed Documents**: PDF, DOCX, DOC, TXT
+- **Rejected Types**: Executables, scripts, archives
+- **Security**: Virus scanning integration (future)
+
+### Image Preprocessing
+
+#### Preprocessing Pipeline
+1. **Grayscale Conversion**: Convert color images to grayscale for better OCR
+2. **Noise Reduction**: Apply Gaussian blur to reduce noise
+3. **Binarization**: Adaptive thresholding for black/white conversion
+4. **Deskewing**: Correct image rotation if detected
+5. **Contrast Enhancement**: Improve text visibility
+
+#### Preprocessing Controls
+- **Enable/Disable**: Configurable per file type
+- **CPU Bounds**: Maximum processing time limits
+- **Quality Preservation**: Original image backup maintained
+- **Fallback**: Skip preprocessing if it takes too long
+
+### Idempotency & Deduplication
+
+#### Idempotency Checks
+- **Database Check**: Verify `ocr_text_object_key` exists before processing
+- **Content Hash**: Use attachment content hash for deduplication
+- **Storage Check**: Verify OCR text object exists before creating
+- **Skip Logic**: Return existing results if already processed
+
+#### Deduplication Strategy
+- **Content-Based**: SHA-256 hash of attachment content
+- **Metadata-Based**: Filename, size, and mimetype combination
+- **Storage Reuse**: Reference existing OCR text objects
+- **Database Constraints**: Unique constraints prevent duplicates
+
+### Error Handling & Quarantine
+
+#### Error Taxonomy
+- **OCR_FAILED**: OCR processing failed after retries
+- **TIMEOUT**: Processing exceeded timeout limits
+- **INVALID_FORMAT**: Unsupported file format
+- **OVERSIZED**: File exceeds size limits
+- **PREPROCESSING_FAILED**: Image preprocessing failed
+
+#### Quarantine System
+- **Quarantine Bucket**: Isolated storage for failed attachments
+- **Reason Codes**: Categorized failure reasons for analysis
+- **Audit Trail**: Complete history of OCR attempts and failures
+- **Recovery Path**: Manual review and reprocessing options
+
+### Metrics & Observability
+
+#### OCR Metrics
+- **Task Counts**: queued, started, success, failed
+- **Performance**: latency_p50, latency_p95, latency_p99
+- **Throughput**: tasks_per_second, queue_depth
+- **Resource Usage**: CPU_time, memory_usage
+
+#### Batch Summary Integration
+- **OCR Tasks**: Total OCR tasks created in batch
+- **OCR Success Rate**: Percentage of successful OCR completions
+- **OCR Latency**: Average and p95 processing times
+- **OCR Failures**: Count and categorization of failures
+
+#### Monitoring & Alerting
+- **High Failure Rate**: Alert if OCR failure rate > 10%
+- **High Latency**: Alert if p95 latency > 60s
+- **Queue Depth**: Alert if queue depth > 80% capacity
+- **Resource Usage**: Alert if CPU/memory usage > 80%
+
+### Security & Compliance
+
+#### PII Protection
+- **Log Redaction**: No PII in OCR processing logs
+- **Content Isolation**: OCR text isolated by tenant
+- **Access Control**: Role-based access to OCR results
+- **Audit Logging**: All OCR operations logged and tracked
+
+#### File Security
+- **Mimetype Validation**: Strict allowlist enforcement
+- **Size Limits**: Configurable caps per file type
+- **Virus Scanning**: Integration with security services (future)
+- **Quarantine**: Automatic isolation of suspicious files
+
+#### Tenant Isolation
+- **Path Prefixes**: All OCR paths include tenant_id
+- **Database Filtering**: All queries scoped to tenant_id
+- **Storage Isolation**: No cross-tenant data access
+- **Metrics Separation**: Per-tenant OCR statistics
+
 ## Ingestion Pipeline Design
 
 ### Pipeline Flow Overview

@@ -153,6 +153,180 @@ POST /ingestion/retry/{batch_id}
 - Docker & Docker Compose
 - PostgreSQL, OpenSearch, Qdrant (or use Docker)
 
+### End-to-End Ingestion
+
+The ingestion pipeline provides a complete, idempotent workflow for processing email batches with comprehensive metrics and deduplication.
+
+#### Running Ingestion
+
+**Single Command Processing:**
+```bash
+# Process emails from a manifest file
+python -m app.cli manifest examples/sample_manifest.json --tenant tenant-123
+
+# Process emails from a dropbox folder
+python -m app.cli dropbox examples/sample_emails/ --tenant tenant-123
+```
+
+**Example Output:**
+```
+============================================================
+BATCH SUMMARY
+============================================================
+Batch ID: sample_batch_001
+Tenant ID: tenant-123
+Total Documents: 3
+Processed: 3
+Failed: 0
+Deduplication:
+  - Exact: 0
+  - Near: 0
+  - Ratio: 0.0%
+OCR Tasks: 0
+Chunks Created: 12
+Processing Time: 1250ms
+============================================================
+```
+
+#### Idempotent Re-runs
+
+The pipeline is designed for safe re-execution:
+- **Checkpoint System**: Progress tracked per batch with resume capability
+- **Content Hashing**: SHA-256 prevents duplicate storage and processing
+- **Database Constraints**: Unique constraints prevent duplicate records
+- **Storage Keys**: Deterministic paths prevent duplicate uploads
+
+**Re-running the same manifest:**
+```bash
+# First run processes emails and creates records
+python -m app.cli manifest batch.json --tenant tenant-123
+
+# Second run detects existing content and skips processing
+python -m app.cli manifest batch.json --tenant tenant-123
+# Output: "No new emails to process" or similar
+```
+
+#### Troubleshooting
+
+**Common Issues and Solutions:**
+
+1. **Encoding Errors**: 
+   - Normalizer handles bytes/str safely with UTF-8 fallback
+   - Check email source encoding if issues persist
+
+2. **Missing Files**: 
+   - Verify file paths in manifest
+   - Check file permissions and accessibility
+
+3. **Quarantine Reasons**:
+   - `MALFORMED_MIME`: Invalid email structure
+   - `OVERSIZED_EMAIL`: Exceeds size limits
+   - `INVALID_MIMETYPE`: Unsupported file types
+   - `PARSE_ERROR`: Content parsing failures
+
+4. **Storage Failures**:
+                - Verify MinIO/S3 connectivity
+                - Check bucket permissions and policies
+                - Ensure tenant isolation is configured
+
+### OCR & Attachment Processing
+
+The system provides robust OCR and text extraction capabilities for email attachments, supporting both native text extraction and optical character recognition for images and documents.
+
+#### Supported File Types
+
+**Native Text Extraction:**
+- **PDF**: PyMuPDF (primary) or pdfplumber fallback
+- **DOCX**: Microsoft Word documents
+- **DOC**: Legacy Word documents (requires antiword)
+- **TXT**: Plain text files with encoding detection
+
+**OCR Processing:**
+- **Images**: JPEG, PNG, GIF, BMP, TIFF
+- **PDFs**: Image-based PDFs without text layers
+- **Documents**: Scanned documents and forms
+
+#### OCR Backends
+
+**Development Environment:**
+- **Stub Provider**: Simulated OCR for testing (default)
+- **Tesseract**: Local OCR engine (optional, feature-flagged)
+
+**Production Environment:**
+- **AWS Textract**: For production PDF processing
+- **Google Vision API**: For image OCR
+- **Azure Computer Vision**: For mixed content
+
+#### Configuration
+
+**OCR Settings:**
+```bash
+# Enable Tesseract backend
+export OCR_ENABLE_TESSERACT=true
+
+# Configure processing limits
+export OCR_MAX_FILE_SIZE_MB=50
+export OCR_MAX_PAGES=100
+export OCR_DEFAULT_TIMEOUT_SECONDS=30
+
+# Image preprocessing
+export OCR_ENABLE_PREPROCESSING=true
+export OCR_ENABLE_GRAYSCALE=true
+export OCR_ENABLE_BINARIZATION=true
+```
+
+#### Processing Flow
+
+1. **Attachment Detection**: Email attachments are identified and validated
+2. **Native Extraction**: Attempt to extract text using native libraries
+3. **OCR Decision**: If no meaningful text, queue for OCR processing
+4. **OCR Processing**: Apply OCR with image preprocessing if beneficial
+5. **Text Storage**: Store extracted text in object storage
+6. **Database Update**: Link OCR text to attachment records
+
+#### OCR Metrics
+
+The batch summary includes comprehensive OCR statistics:
+
+```
+OCR Tasks: 15
+OCR Success Rate: 93.3%
+OCR Latency (P95): 2.1s
+```
+
+**Available Metrics:**
+- `ocr_tasks`: Total OCR tasks created
+- `ocr_queued`: Tasks waiting in queue
+- `ocr_started`: Tasks currently processing
+- `ocr_completed`: Successfully completed tasks
+- `ocr_failed`: Failed OCR attempts
+- `ocr_success_rate`: Percentage of successful OCR
+- `ocr_latency_p95`: 95th percentile processing time
+
+#### Troubleshooting OCR
+
+**Common Issues and Solutions:**
+
+1. **Low OCR Accuracy**:
+   - Enable image preprocessing (grayscale, binarization)
+   - Check image quality and resolution
+   - Verify language hints for non-English content
+
+2. **Slow Processing**:
+   - Reduce concurrent OCR tasks
+   - Adjust timeout settings
+   - Use cloud backends for large files
+
+3. **Memory Issues**:
+   - Reduce max file size limits
+   - Limit concurrent processing
+   - Monitor system resources
+
+4. **Dependency Issues**:
+   - Install required libraries (PyMuPDF, python-docx)
+   - Install Tesseract for local OCR
+   - Verify OpenCV for image preprocessing
+
 ### Database & Migrations
 
 #### Setting up the Database

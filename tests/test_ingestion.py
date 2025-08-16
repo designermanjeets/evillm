@@ -163,6 +163,30 @@ class TestContentNormalization:
         assert "John Doe" in text_with_signature
         assert "This is the main email content" in text_with_signature
 
+    def test_normalizer_handles_bytes_and_str_inputs(self):
+        """Test that normalizer safely handles both bytes and str inputs."""
+        from app.ingestion.normalizer import ContentNormalizer
+        
+        normalizer = ContentNormalizer()
+        
+        # Test with bytes input
+        bytes_content = b"<html><body><p>Hello World</p></body></html>"
+        result_bytes = normalizer.normalize_content(bytes_content, "text/html", "utf-8")
+        
+        # Test with str input
+        str_content = "<html><body><p>Hello World</p></body></html>"
+        result_str = normalizer.normalize_content(str_content, "text/html", "utf-8")
+        
+        # Both should produce the same normalized text
+        assert result_bytes.normalized_text == result_str.normalized_text
+        assert "Hello World" in result_bytes.normalized_text
+        
+        # Check normalization manifest
+        assert result_bytes.normalization_manifest['input_type'] == 'bytes'
+        assert result_str.normalization_manifest['input_type'] == 'str'
+        assert 'stripped_blocks' in result_bytes.normalization_manifest
+        assert 'token_estimate' in result_bytes.normalization_manifest
+
 
 class TestAttachmentProcessing:
     """Test EARS-ING-3: Attachment processing."""
@@ -170,13 +194,13 @@ class TestAttachmentProcessing:
     def test_docx_text_extraction(self):
         """Test DOCX text extraction."""
         from app.ingestion.attachments import AttachmentProcessor
-        
+    
         processor = AttachmentProcessor()
-        
+    
         # Test that the processor has the expected methods
-        assert hasattr(processor, 'extract_text')
-        assert hasattr(processor, '_extract_docx_text')
-        assert 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' in processor.supported_mimetypes
+        assert hasattr(processor, 'process_attachment')
+        assert hasattr(processor, 'ocr_service')
+        assert hasattr(processor, 'document_processor')
     
     def test_ocr_task_creation(self):
         """Test OCR task creation for images."""

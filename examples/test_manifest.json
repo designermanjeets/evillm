@@ -1,0 +1,23 @@
+{
+  "batch_id": "test_batch_001",
+  "source_type": "manifest",
+  "file_manifest": [
+    {
+      "file_path": "examples/sample_emails/email1.eml",
+      "file_name": "email1.eml",
+      "file_size": 1024
+    },
+    {
+      "file_path": "examples/sample_emails/email2.eml",
+      "file_name": "email2.eml",
+      "file_size": 2048
+    }
+  ],
+  "processing_options": {
+    "batch_size": 10,
+    "enable_ocr": true,
+    "dedup_threshold": 0.8,
+    "chunk_size": 512,
+    "chunk_overlap": 50
+  }
+}

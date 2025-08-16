@@ -1,12 +1,16 @@
 """Attachment processor for email ingestion pipeline."""
 
 import asyncio
-from typing import Optional, Dict, Any
+import time
+from typing import Optional, Dict, Any, List
 import structlog
 import hashlib
 from datetime import datetime
 
 from .models import AttachmentInfo, OCRTask, ProcessingStatus, ErrorType
+from ..services.document_processor import get_document_processor, TextExtractionResult
+from ..services.ocr import get_ocr_service, OCRResult, OCRTask as OCRTaskModel
+from ..config.ocr import get_ocr_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -16,15 +20,220 @@ class AttachmentProcessor:
     
     def __init__(self):
         """Initialize attachment processor."""
-        self.supported_mimetypes = {
-            'application/pdf': self._extract_pdf_text,
-            'application/msword': self._extract_doc_text,
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': self._extract_docx_text,
-            'application/vnd.ms-excel': self._extract_excel_text,
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': self._extract_xlsx_text,
-            'text/plain': self._extract_plain_text,
-            'text/html': self._extract_html_text
-        }
+        self.ocr_service = get_ocr_service()
+        self.document_processor = get_document_processor()
+        self.ocr_settings = get_ocr_settings()
+        
+        # OCR tasks queue (in-process for Phase-1)
+        self.ocr_queue: List[OCRTaskModel] = []
+        self.processing_tasks: Dict[str, OCRTaskModel] = {}
+    
+    async def process_attachment(self, attachment: AttachmentInfo, tenant_id: str) -> Dict[str, Any]:
+        """Process attachment with text extraction and OCR if needed."""
+        try:
+            # Validate attachment
+            if not self._is_valid_attachment(attachment):
+                return {
+                    "success": False,
+                    "text": None,
+                    "needs_ocr": False,
+                    "error": "Invalid attachment",
+                    "quarantined": True
+                }
+            
+            # Try native text extraction first
+            text_result = await self.document_processor.extract_text(
+                attachment.content, 
+                attachment.content_type,
+                timeout=self.ocr_settings.default_timeout_seconds
+            )
+            
+            if text_result.success and not self.document_processor.needs_ocr(text_result):
+                # Native text extraction successful
+                logger.info("Native text extracted successfully",
+                           filename=attachment.filename,
+                           mimetype=attachment.content_type,
+                           text_length=len(text_result.text))
+                
+                return {
+                    "success": True,
+                    "text": text_result.text,
+                    "needs_ocr": False,
+                    "pages": text_result.pages,
+                    "extractor": text_result.metadata.get("extractor", "unknown")
+                }
+            else:
+                # Need OCR processing
+                logger.info("Attachment requires OCR processing",
+                           filename=attachment.filename,
+                           mimetype=attachment.content_type,
+                           reason="No native text or insufficient content")
+                
+                # Create OCR task
+                ocr_task = await self._create_ocr_task(attachment, tenant_id)
+                
+                return {
+                    "success": False,
+                    "text": None,
+                    "needs_ocr": True,
+                    "ocr_task_id": ocr_task.task_id,
+                    "pages": text_result.pages if text_result.success else 1
+                }
+                
+        except Exception as exc:
+            logger.error("Failed to process attachment",
+                        filename=attachment.filename,
+                        mimetype=attachment.content_type,
+                        exc_info=exc)
+            return {
+                "success": False,
+                "text": None,
+                "needs_ocr": False,
+                "error": str(exc),
+                "quarantined": True
+            }
+    
+    async def _create_ocr_task(self, attachment: AttachmentInfo, tenant_id: str) -> OCRTaskModel:
+        """Create OCR task for attachment."""
+        import time
+        
+        task_id = f"ocr_{attachment.filename}_{int(time.time())}"
+        
+        ocr_task = OCRTaskModel(
+            task_id=task_id,
+            attachment_id=attachment.filename,  # Using filename as ID for now
+            tenant_id=tenant_id,
+            content_hash=attachment.content_hash,
+            mimetype=attachment.content_type,
+            file_size=attachment.content_length
+        )
+        
+        # Add to queue
+        self.ocr_queue.append(ocr_task)
+        logger.info("OCR task created and queued",
+                   task_id=task_id,
+                   filename=attachment.filename,
+                   queue_size=len(self.ocr_queue))
+        
+        return ocr_task
+    
+    async def process_ocr_queue(self) -> List[Dict[str, Any]]:
+        """Process queued OCR tasks."""
+        results = []
+        
+        while self.ocr_queue and len(self.processing_tasks) < self.ocr_settings.max_concurrent_tasks:
+            task = self.ocr_queue.pop(0)
+            
+            try:
+                # Mark as processing
+                task.status = "processing"
+                task.started_at = time.time()
+                self.processing_tasks[task.task_id] = task
+                
+                # Process OCR
+                result = await self._process_ocr_task(task)
+                results.append(result)
+                
+                # Remove from processing
+                del self.processing_tasks[task.task_id]
+                
+            except Exception as exc:
+                logger.error("OCR task processing failed",
+                           task_id=task.task_id,
+                           exc_info=exc)
+                task.status = "failed"
+                task.error_message = str(exc)
+                results.append({
+                    "task_id": task.task_id,
+                    "success": False,
+                    "error": str(exc)
+                })
+                
+                # Remove from processing
+                del self.processing_tasks[task.task_id]
+        
+        return results
+    
+    async def _process_ocr_task(self, task: OCRTaskModel) -> Dict[str, Any]:
+        """Process individual OCR task."""
+        try:
+            # Get attachment content (in real implementation, fetch from storage)
+            # For now, we'll simulate this
+            attachment_content = b"sample content"  # Placeholder
+            
+            # Process OCR
+            ocr_result = await self.ocr_service.extract_text(
+                attachment_content,
+                task.mimetype,
+                language_hint=task.language_hint,
+                timeout=self.ocr_settings.default_timeout_seconds
+            )
+            
+            if ocr_result.success:
+                task.status = "completed"
+                task.completed_at = time.time()
+                task.result = ocr_result
+                
+                logger.info("OCR task completed successfully",
+                           task_id=task.task_id,
+                           text_length=len(ocr_result.text),
+                           processing_time=ocr_result.processing_time)
+                
+                return {
+                    "task_id": task.task_id,
+                    "success": True,
+                    "text": ocr_result.text,
+                    "confidence": ocr_result.confidence,
+                    "processing_time": ocr_result.processing_time,
+                    "backend": ocr_result.backend
+                }
+            else:
+                task.status = "failed"
+                task.error_message = ocr_result.error_message
+                
+                logger.error("OCR task failed",
+                           task_id=task.task_id,
+                           error=ocr_result.error_message)
+                
+                return {
+                    "task_id": task.task_id,
+                    "success": False,
+                    "error": ocr_result.error_message
+                }
+                
+        except Exception as exc:
+            task.status = "failed"
+            task.error_message = str(exc)
+            
+            logger.error("OCR task processing failed",
+                       task_id=task.task_id,
+                       exc_info=exc)
+            
+            return {
+                "task_id": task.task_id,
+                "success": False,
+                "error": str(exc)
+            }
+    
+    def _is_valid_attachment(self, attachment: AttachmentInfo) -> bool:
+        """Check if attachment is valid for processing."""
+        # Check mimetype allowlist
+        if attachment.content_type not in self.ocr_settings.allowed_mimetypes:
+            logger.warning("Attachment mimetype not allowed",
+                          filename=attachment.filename,
+                          mimetype=attachment.content_type)
+            return False
+        
+        # Check size limits
+        max_size_mb = self.ocr_settings.size_limits_mb.get(attachment.content_type, 10)
+        if attachment.content_length > max_size_mb * 1024 * 1024:
+            logger.warning("Attachment exceeds size limit",
+                          filename=attachment.filename,
+                          size_mb=attachment.content_length / (1024 * 1024),
+                          max_size_mb=max_size_mb)
+            return False
+        
+        return True
     
     async def extract_text(self, attachment: AttachmentInfo) -> Optional[str]:
         """Extract text from attachment if possible."""

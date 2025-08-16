@@ -157,6 +157,10 @@ class IngestionPipeline:
             # Process attachments
             processed_attachments = await self._process_attachments(attachments)
             
+            # Generate thread and email IDs first
+            thread_id = self.thread_manager.generate_thread_id(metadata)
+            email_id = self._generate_email_id(metadata.message_id)
+            
             # Check for duplicates
             dedup_result = await self._check_duplicates(email_content, processed_attachments)
             
@@ -165,11 +169,12 @@ class IngestionPipeline:
                            message_id=metadata.message_id,
                            duplicate_type=dedup_result.duplicate_type)
                 self.processing_stats['duplicate_emails'] += 1
+                
+                # Persist dedup lineage
+                await self.deduplication_engine.persist_dedup_lineage(
+                    dedup_result, email_id, self.tenant_id
+                )
                 return
-            
-            # Generate thread and email IDs
-            thread_id = self.thread_manager.generate_thread_id(metadata)
-            email_id = self._generate_email_id(metadata.message_id)
             
             # Store content in storage
             storage_keys = await self._store_content(email_content, processed_attachments,

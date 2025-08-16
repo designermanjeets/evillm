@@ -43,6 +43,14 @@ class MetricsCollector:
         self.ocr_rate = 0.0
         self.success_rate = 0.0
         
+        # OCR metrics
+        self.ocr_tasks_queued = 0
+        self.ocr_tasks_started = 0
+        self.ocr_tasks_completed = 0
+        self.ocr_tasks_failed = 0
+        self.ocr_processing_times = []
+        self.ocr_success_rate = 0.0
+        
         # Throughput metrics
         self.docs_per_second = 0.0
         self.average_latency = 0.0
@@ -299,6 +307,48 @@ class MetricsCollector:
             logger.error("Failed to get performance summary", exc_info=exc)
             return {}
     
+    def get_batch_summary(self) -> Dict[str, Any]:
+        """Get comprehensive batch summary with dedup statistics."""
+        try:
+            if not self.batch_start_time:
+                return {}
+            
+            # Calculate dedup statistics
+            docs_total = self.processed_emails + self.failed_emails + self.quarantined_emails + self.duplicate_emails
+            dedup_exact = self.duplicate_emails  # This will be split into exact/near in future
+            dedup_near = 0  # Placeholder for near-duplicate count
+            dedup_ratio = (dedup_exact + dedup_near) / docs_total if docs_total > 0 else 0.0
+            
+            # Calculate processing time
+            if self.batch_end_time:
+                elapsed_ms = int((self.batch_end_time - self.batch_start_time).total_seconds() * 1000)
+            else:
+                elapsed_ms = int((datetime.utcnow() - self.batch_start_time).total_seconds() * 1000)
+            
+            return {
+                'docs_total': docs_total,
+                'processed': self.processed_emails,
+                'failed': self.failed_emails,
+                'dedup_exact': dedup_exact,
+                'dedup_near': dedup_near,
+                'dedup_ratio': round(dedup_ratio, 3),
+                'ocr_tasks': self.ocr_tasks_queued + self.ocr_tasks_started + self.ocr_tasks_completed + self.ocr_tasks_failed,
+                'ocr_queued': self.ocr_tasks_queued,
+                'ocr_started': self.ocr_tasks_started,
+                'ocr_completed': self.ocr_tasks_completed,
+                'ocr_failed': self.ocr_tasks_failed,
+                'ocr_success_rate': round(self.ocr_success_rate, 3),
+                'ocr_latency_p95': round(self.get_ocr_latency_p95(), 3),
+                'chunks_created': self.total_chunks,
+                'elapsed_ms': elapsed_ms,
+                'batch_id': self.current_batch_id,
+                'tenant_id': getattr(self, 'tenant_id', 'unknown')
+            }
+            
+        except Exception as exc:
+            logger.error("Failed to get batch summary", exc_info=exc)
+            return {}
+    
     def reset_metrics(self):
         """Reset all metrics."""
         try:
@@ -329,6 +379,14 @@ class MetricsCollector:
             self.ocr_rate = 0.0
             self.success_rate = 0.0
             
+            # Reset OCR metrics
+            self.ocr_tasks_queued = 0
+            self.ocr_tasks_started = 0
+            self.ocr_tasks_completed = 0
+            self.ocr_tasks_failed = 0
+            self.ocr_processing_times = []
+            self.ocr_success_rate = 0.0
+            
             # Reset throughput metrics
             self.docs_per_second = 0.0
             self.average_latency = 0.0
@@ -340,6 +398,42 @@ class MetricsCollector:
             
         except Exception as exc:
             logger.error("Failed to reset metrics", exc_info=exc)
+    
+    def record_ocr_task_queued(self):
+        """Record OCR task queued."""
+        self.ocr_tasks_queued += 1
+    
+    def record_ocr_task_started(self):
+        """Record OCR task started."""
+        self.ocr_tasks_started += 1
+    
+    def record_ocr_task_completed(self, processing_time: float):
+        """Record OCR task completed."""
+        self.ocr_tasks_completed += 1
+        self.ocr_processing_times.append(processing_time)
+        
+        # Update OCR success rate
+        total_ocr = self.ocr_tasks_completed + self.ocr_tasks_failed
+        if total_ocr > 0:
+            self.ocr_success_rate = self.ocr_tasks_completed / total_ocr
+    
+    def record_ocr_task_failed(self):
+        """Record OCR task failed."""
+        self.ocr_tasks_failed += 1
+        
+        # Update OCR success rate
+        total_ocr = self.ocr_tasks_completed + self.ocr_tasks_failed
+        if total_ocr > 0:
+            self.ocr_success_rate = self.ocr_tasks_completed / total_ocr
+    
+    def get_ocr_latency_p95(self) -> float:
+        """Get 95th percentile OCR processing latency."""
+        if not self.ocr_processing_times:
+            return 0.0
+        
+        sorted_times = sorted(self.ocr_processing_times)
+        p95_index = int(len(sorted_times) * 0.95)
+        return sorted_times[p95_index] if p95_index < len(sorted_times) else sorted_times[-1]
     
     def export_metrics(self, format: str = "json") -> str:
         """Export metrics in the specified format."""

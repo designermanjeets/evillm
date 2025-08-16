@@ -169,7 +169,47 @@ This document outlines the ordered, atomic tasks required to implement the Logis
 
 **Risks**: Malformed MIME, large attachments, OCR latency, false near-dups
 **Dependencies**: TASK-2, TASK-3
+**Status**: COMPLETED
+
+### TASK-5: OCR Service Implementation
+**Goal**: Implement robust OCR and attachment text extraction with provider-agnostic backend support
+**EARS Mapping**: EARS-10, EARS-OCR-1, EARS-OCR-2, EARS-OCR-3, EARS-OCR-4, EARS-OCR-5, EARS-OCR-6, EARS-OCR-7, EARS-OCR-8
+**Files Touched**:
+- `app/services/ocr.py`
+- `app/services/document_processor.py`
+- `app/config/ocr.py`
+- `app/ingestion/attachments.py`
+- `app/ingestion/metrics.py`
+- `tests/test_ocr.py`
+
+**Acceptance Criteria**:
+- OCR service with provider-agnostic interface
+- Local backend (stub/Tesseract) for development
+- DOCX/PDF native text extraction with OCR fallback
+- OCR text storage and database persistence
+- Comprehensive metrics and batch summary integration
+- Idempotent processing with quarantine system
+- All EARS-OCR requirements implemented and tested
+
+**Risks**: Large PDFs, skewed images, OCR accuracy variations
+**Dependencies**: TASK-4 (Ingestion Pipeline)
 **Status**: IN PROGRESS
+
+**Subtasks**:
+- T5.1: OCR interface + provider registry
+- T5.2: Local backend (dev): stub/Tesseract adapter (feature-flagged)
+- T5.3: DOCX/PDF text extractor (native text) with fallbacks
+- T5.4: OCR queue + worker loop (in-process or simple table/stub for Phase-1)
+- T5.5: Storage writes for OCR text + DB update (ocr_text_object_key)
+- T5.6: Policies: allowlist, caps, timeouts, retries, quarantine
+- T5.7: Metrics wiring + batch summary integration
+- T5.8: Tests (unit/integration) & docs
+
+**Risks & Mitigation**:
+- **Large PDFs**: Page caps and timeout limits
+- **Skewed Images**: Preprocessing pipeline with deskewing
+- **OCR Accuracy**: Multiple backend support and confidence scoring
+- **Processing Time**: Async processing with backpressure controls
 
 **Subtasks**:
 - TASK-4.1: Source "dropbox" + manifest reader (Phase-1)

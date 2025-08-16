@@ -518,3 +518,91 @@ The Logistics Email AI system processes incoming logistics emails to provide int
 - And: No cross-tenant data access occurs
 - And: All storage paths and database queries are tenant-scoped
 - And: Security boundaries are maintained
+
+### EARS-OCR-1: OCR Text Extraction
+**WHEN** an attachment lacks extractable text, **THE SYSTEM SHALL** attempt OCR **WITH** a configurable timeout and retry policy.
+
+**Acceptance Criteria:**
+- Given: An attachment without native text content
+- When: OCR processing is triggered
+- Then: OCR is attempted with configurable timeout
+- And: Retry policy is applied with exponential backoff
+- And: Processing continues within configured limits
+- And: OCR tasks are queued and processed asynchronously
+
+### EARS-OCR-2: OCR Text Storage
+**WHEN** OCR succeeds, **THE SYSTEM SHALL** store OCR text in object storage **WITH** an `ocr_text_object_key` persisted on the attachment row.
+
+**Acceptance Criteria:**
+- Given: OCR processing completes successfully
+- When: OCR text is generated
+- Then: OCR text is stored in object storage
+- And: `ocr_text_object_key` is persisted to Attachment.ocr_text_object_key
+- And: Storage path follows tenant-aware naming convention
+- And: Content hash is calculated for deduplication
+
+### EARS-OCR-3: OCR Failure Handling
+**WHEN** OCR fails after max retries, **THE SYSTEM SHALL** quarantine the item **WITH** a reason code and continue the batch.
+
+**Acceptance Criteria:**
+- Given: OCR processing fails after maximum retries
+- When: Failure is detected
+- Then: Attachment is quarantined with failure reason
+- And: Batch processing continues for other items
+- And: Failure metrics are recorded and exposed
+- And: Audit trail is maintained for failed OCR attempts
+
+### EARS-OCR-4: Attachment Security
+**THE SYSTEM SHALL** enforce an attachment mimetype allowlist and size caps **WITH** rejection metrics recorded.
+
+**Acceptance Criteria:**
+- Given: An attachment is submitted for processing
+- When: Security validation occurs
+- Then: Only allowed mimetypes are processed
+- And: Size limits are enforced per file type
+- And: Rejection metrics are recorded and exposed
+- And: Security violations are logged and quarantined
+
+### EARS-OCR-5: OCR Backend Support
+**THE SYSTEM SHALL** support multiple OCR backends behind a stable interface **WITH** a default local backend (stub or Tesseract) for dev.
+
+**Acceptance Criteria:**
+- Given: Multiple OCR backends are available
+- When: OCR processing is requested
+- Then: Backend selection is configurable
+- And: Local backend (stub/Tesseract) is available for development
+- And: Cloud backends can be integrated via plugin interface
+- And: Backend switching is transparent to calling code
+
+### EARS-OCR-6: Image Preprocessing
+**THE SYSTEM SHALL** preprocess images (e.g., grayscale, binarization) **WHEN** beneficial **WITH** safeguards to avoid over-processing.
+
+**Acceptance Criteria:**
+- Given: An image requires OCR processing
+- When: Preprocessing is applied
+- Then: Image enhancement improves OCR accuracy
+- And: Processing time is bounded and configurable
+- And: Preprocessing can be disabled if not beneficial
+- And: Original image quality is preserved
+
+### EARS-OCR-7: OCR Idempotency
+**THE SYSTEM SHALL** be idempotent; re-processing the same attachment **SHALL** not duplicate storage objects or DB writes.
+
+**Acceptance Criteria:**
+- Given: An attachment has already been OCR processed
+- When: Re-processing is attempted
+- Then: No duplicate OCR processing occurs
+- And: No duplicate storage objects are created
+- And: No duplicate database records are written
+- And: Existing OCR text is reused
+
+### EARS-OCR-8: OCR Metrics
+**THE SYSTEM SHALL** emit metrics (queued, started, success, failed, latency) **WITH** inclusion in batch summary.
+
+**Acceptance Criteria:**
+- Given: OCR processing occurs during batch ingestion
+- When: Metrics are collected
+- Then: OCR task counts are recorded (queued, started, success, failed)
+- And: Processing latency is measured (p95, p99)
+- And: Metrics are included in batch summary output
+- And: Per-tenant OCR statistics are available

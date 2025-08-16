@@ -62,6 +62,26 @@ async def run_dropbox_ingestion(
     try:
         metrics = await run_ingestion_batch(manifest, tenant_id)
         logger.info("Ingestion completed successfully", metrics=metrics.dict())
+        
+        # Print batch summary
+        if hasattr(metrics, 'get_batch_summary'):
+            summary = metrics.get_batch_summary()
+            print("\n" + "="*60)
+            print("BATCH SUMMARY")
+            print("="*60)
+            print(f"Batch ID: {summary.get('batch_id', 'N/A')}")
+            print(f"Tenant ID: {summary.get('tenant_id', 'N/A')}")
+            print(f"Total Documents: {summary.get('docs_total', 0)}")
+            print(f"Processed: {summary.get('processed', 0)}")
+            print(f"Failed: {summary.get('failed', 0)}")
+            print(f"Deduplication:")
+            print(f"  - Exact: {summary.get('dedup_exact', 0)}")
+            print(f"  - Near: {summary.get('dedup_near', 0)}")
+            print(f"  - Ratio: {summary.get('dedup_ratio', 0.0):.1%}")
+            print(f"OCR Tasks: {summary.get('ocr_tasks', 0)}")
+            print(f"Chunks Created: {summary.get('chunks_created', 0)}")
+            print(f"Processing Time: {summary.get('elapsed_ms', 0)}ms")
+            print("="*60)
     except Exception as exc:
         logger.error("Ingestion failed", exc_info=exc)
         sys.exit(1)
@@ -106,6 +126,26 @@ async def run_manifest_ingestion(
         metrics = await run_ingestion_batch(manifest, tenant_id)
         logger.info("Ingestion completed successfully", metrics=metrics.dict())
         
+        # Print batch summary
+        if hasattr(metrics, 'get_batch_summary'):
+            summary = metrics.get_batch_summary()
+            print("\n" + "="*60)
+            print("BATCH SUMMARY")
+            print("="*60)
+            print(f"Batch ID: {summary.get('batch_id', 'N/A')}")
+            print(f"Tenant ID: {summary.get('tenant_id', 'N/A')}")
+            print(f"Total Documents: {summary.get('docs_total', 0)}")
+            print(f"Processed: {summary.get('processed', 0)}")
+            print(f"Failed: {summary.get('failed', 0)}")
+            print(f"Deduplication:")
+            print(f"  - Exact: {summary.get('dedup_exact', 0)}")
+            print(f"  - Near: {summary.get('dedup_near', 0)}")
+            print(f"  - Ratio: {summary.get('dedup_ratio', 0.0):.1%}")
+            print(f"OCR Tasks: {summary.get('ocr_tasks', 0)}")
+            print(f"Chunks Created: {summary.get('chunks_created', 0)}")
+            print(f"Processing Time: {summary.get('elapsed_ms', 0)}ms")
+            print("="*60)
+        
     except json.JSONDecodeError as exc:
         logger.error("Invalid JSON in manifest file", exc_info=exc)
         sys.exit(1)
@@ -145,11 +185,6 @@ Examples:
     manifest_parser.add_argument("path", help="Path to manifest JSON file")
     manifest_parser.add_argument("--tenant", required=True, help="Tenant ID")
     
-    # Global options
-    parser.add_argument("--log-level", default="INFO", 
-                       choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-                       help="Log level")
-    
     args = parser.parse_args()
     
     if not args.command:
@@ -172,7 +207,7 @@ Examples:
     
     # Set log level
     import logging
-    logging.basicConfig(level=getattr(logging, args.log_level))
+    logging.basicConfig(level=logging.INFO)
     
     # Run appropriate command
     try:

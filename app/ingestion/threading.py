@@ -230,6 +230,31 @@ class ThreadManager:
         except Exception:
             return "no_subject"
     
+    def generate_thread_id(self, metadata: EmailMetadata) -> str:
+        """Generate a stable thread ID from email metadata."""
+        try:
+            # Try to use Message-ID if available
+            if metadata.message_id:
+                # Extract domain and timestamp from Message-ID
+                import hashlib
+                message_hash = hashlib.sha256(metadata.message_id.encode()).hexdigest()[:16]
+                return f"thread_{message_hash}"
+            
+            # Fallback to subject-based threading
+            if metadata.subject:
+                normalized_subject = self._normalize_subject(metadata.subject)
+                subject_hash = hashlib.sha256(normalized_subject.encode()).hexdigest()[:16]
+                return f"thread_subj_{subject_hash}"
+            
+            # Final fallback
+            import time
+            return f"thread_fallback_{int(time.time())}"
+            
+        except Exception as exc:
+            logger.error("Failed to generate thread ID", exc_info=exc)
+            import time
+            return f"thread_error_{int(time.time())}"
+    
     async def get_thread_info(self, thread_id: str) -> Optional[ThreadInfo]:
         """Get thread information by ID."""
         return self.threads.get(thread_id)
