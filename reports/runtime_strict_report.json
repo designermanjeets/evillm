@@ -1,0 +1,31 @@
+{
+  "status": "success",
+  "tenant_id": "test-tenant",
+  "environment": "development",
+  "strict_config": {
+    "strict_mode": true,
+    "require": {
+      "bm25": true,
+      "vector": true
+    },
+    "llm_allow_stub": false,
+    "security": {
+      "redact_pii_in_logs": true,
+      "cors_allowed_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+      ],
+      "csp": "default-src 'self'; img-src 'self' data:; connect-src 'self' http://localhost:*",
+      "rate_limit_per_minute": 60
+    },
+    "quality_thresholds": {
+      "hit_at_5": 0.65,
+      "mrr_at_10": 0.55,
+      "ndcg_at_10": 0.6
+    },
+    "eval": {
+      "enabled": true,
+      "threshold": 0.8
+    }
+  }
+}

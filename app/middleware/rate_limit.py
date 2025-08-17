@@ -12,13 +12,21 @@ logger = structlog.get_logger(__name__)
 class RateLimitMiddleware:
     """Rate limiting middleware with per-IP and per-tenant limits."""
     
-    def __init__(self, requests_per_minute: int = 60):
+    def __init__(self, app, requests_per_minute: int = 60):
+        self.app = app
         self.requests_per_minute = requests_per_minute
         self.ip_requests: Dict[str, list] = {}
         self.tenant_requests: Dict[str, list] = {}
     
-    async def __call__(self, request: Request, call_next):
+    async def __call__(self, scope, receive, send):
         """Process request with rate limiting."""
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        
+        # Create a request object for easier handling
+        request = Request(scope, receive)
+        
         # Get client IP
         client_ip = self._get_client_ip(request)
         
@@ -32,7 +40,8 @@ class RateLimitMiddleware:
                           tenant_id=tenant_id,
                           path=request.url.path)
             
-            return JSONResponse(
+            # Send rate limit response
+            response = JSONResponse(
                 status_code=429,
                 content={
                     "error": "rate_limit_exceeded",
@@ -41,10 +50,12 @@ class RateLimitMiddleware:
                 },
                 headers={"Retry-After": "60"}
             )
+            
+            await response(scope, receive, send)
+            return
         
-        # Process request
-        response = await call_next(request)
-        return response
+        # Process request through the app
+        await self.app(scope, receive, send)
     
     def _get_client_ip(self, request: Request) -> str:
         """Get client IP address."""

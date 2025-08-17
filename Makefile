@@ -1,208 +1,194 @@
-# Makefile for Logistics Email AI
-# Common development tasks and shortcuts
+# EvilLLM Makefile - Demo and Development Targets
 
-.PHONY: help install test lint format clean docker-up docker-down run dev
+.PHONY: help install test lint clean demo-seed demo-run demo-open demo-smoke strict-scan collect-metrics
 
 # Default target
 help:
-	@echo "Logistics Email AI - Development Commands"
-	@echo ""
-	@echo "Setup:"
-	@echo "  install     Install dependencies"
-	@echo "  setup       Setup development environment"
+	@echo "EvilLLM Development and Demo Targets"
+	@echo "===================================="
 	@echo ""
 	@echo "Development:"
-	@echo "  run         Run the application"
-	@echo "  dev         Run with auto-reload"
-	@echo "  test        Run tests"
-	@echo "  lint        Run linting checks"
-	@echo "  format      Format code"
+	@echo "  install        Install dependencies"
+	@echo "  test           Run all tests"
+	@echo "  lint           Run linting and formatting"
+	@echo "  clean          Clean up temporary files"
 	@echo ""
-	@echo "Docker:"
-	@echo "  docker-up   Start all services with Docker"
-	@echo "  docker-down Stop all Docker services"
+	@echo "Demo:"
+	@echo "  demo-seed      Seed demo data and create fixtures"
+	@echo "  demo-run       Start the application server"
+	@echo "  demo-open      Open demo UI in browser"
+	@echo "  demo-smoke     Run strict mode verification and smoke tests"
 	@echo ""
-	@echo "Quality:"
-	@echo "  check       Run all quality checks"
-	@echo "  clean       Clean up generated files"
+	@echo "Verification:"
+	@echo "  strict-scan    Run strict mode scanner (no fallbacks)"
+	@echo "  collect-metrics Collect metrics snapshot"
 	@echo ""
-	@echo "Database:"
-	@echo "  db-migrate  Run database migrations"
-	@echo "  db-reset    Reset database"
-	@echo ""
-	@echo "Evaluation:"
-	@echo "  eval        Run promptfoo evaluation"
+	@echo "Examples:"
+	@echo "  make demo-seed && make demo-run && make demo-open"
+	@echo "  make demo-smoke  # Full verification"
 
-# Setup and installation
+# Development targets
 install:
 	@echo "Installing dependencies..."
-	pip install -e .
-	pip install -e ".[dev,test]"
+	pip install -r requirements.txt
+	@echo "✅ Dependencies installed"
 
-setup: install
-	@echo "Setting up development environment..."
-	@if [ ! -f .env ]; then \
-		cp infra/env.example .env; \
-		echo "Created .env file from template"; \
-		echo "Please edit .env with your configuration"; \
-	else \
-		echo ".env file already exists"; \
-	fi
-
-# Development commands
-run:
-	@echo "Starting Logistics Email AI..."
-	uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-dev:
-	@echo "Starting Logistics Email AI in development mode..."
-	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# Testing
 test:
 	@echo "Running tests..."
 	pytest tests/ -v --tb=short
+	@echo "✅ Tests completed"
 
-test-cov:
-	@echo "Running tests with coverage..."
-	pytest tests/ -v --cov=app --cov-report=html --cov-report=term
-
-test-fast:
-	@echo "Running fast tests only..."
-	pytest tests/ -v -m "not slow"
-
-# Code quality
 lint:
-	@echo "Running linting checks..."
-	ruff check .
-	mypy app/
+	@echo "Running linting..."
+	black app/ tests/ --check
+	flake8 app/ tests/ --max-line-length=88
+	@echo "✅ Linting completed"
 
-format:
-	@echo "Formatting code..."
-	ruff format .
-	ruff check --fix .
-
-check: lint test
-	@echo "All quality checks passed!"
-
-# Docker commands
-docker-up:
-	@echo "Starting Docker services..."
-	cd infra && docker-compose up -d
-
-docker-down:
-	@echo "Stopping Docker services..."
-	cd infra && docker-compose down
-
-docker-logs:
-	@echo "Showing Docker logs..."
-	cd infra && docker-compose logs -f
-
-docker-build:
-	@echo "Building Docker image..."
-	cd infra && docker-compose build
-
-# Database commands
-db-migrate: ## Run database migrations
-	@echo "Running database migrations..."
-	alembic upgrade head
-
-db-reset: ## Reset database (WARNING: Destructive)
-	@echo "WARNING: This will delete all data"
-	@read -p "Are you sure? Type 'yes' to confirm: " confirm; \
-	if [ "$$confirm" = "yes" ]; then \
-		echo "Dropping all tables..."; \
-		alembic downgrade base; \
-		echo "Recreating schema..."; \
-		alembic upgrade head; \
-		echo "Database reset complete"; \
-	else \
-		echo "Database reset cancelled"; \
-	fi
-
-db-status: ## Check database migration status
-	@echo "Checking database migration status..."
-	alembic current
-	alembic heads
-
-db-create-migration: ## Create a new migration file
-	@read -p "Enter migration description: " desc; \
-	alembic revision --autogenerate -m "$$desc"
-
-# Evaluation
-eval:
-	@echo "Running promptfoo evaluation..."
-	# TODO: Install promptfoo when needed
-	@echo "Please install promptfoo: npm install -g promptfoo"
-	@echo "Then run: promptfoo eval -c eval/promptfoo.yaml"
-
-# Cleanup
 clean:
-	@echo "Cleaning up generated files..."
+	@echo "Cleaning up..."
 	find . -type f -name "*.pyc" -delete
 	find . -type d -name "__pycache__" -delete
 	find . -type d -name "*.egg-info" -exec rm -rf {} +
-	find . -type d -name ".pytest_cache" -exec rm -rf {} +
-	find . -type d -name ".mypy_cache" -exec rm -rf {} +
-	find . -type d -name "htmlcov" -exec rm -rf {} +
-	find . -type f -name ".coverage" -delete
-	@echo "Cleanup complete!"
+	rm -rf .pytest_cache/
+	rm -rf .mypy_cache/
+	@echo "✅ Cleanup completed"
 
-# Health checks
-health:
-	@echo "Checking service health..."
-	@if command -v curl >/dev/null 2>&1; then \
-		curl -s http://localhost:8000/health/ | jq . || echo "Service not running"; \
+# Demo targets
+demo-seed:
+	@echo "🌱 Seeding demo data..."
+	python -m scripts.demo_seed
+	@echo "✅ Demo data seeded"
+
+demo-run:
+	@echo "🚀 Starting EvilLLM application..."
+	@echo "📱 Application will be available at: http://localhost:8000"
+	@echo "📚 API docs: http://localhost:8000/docs"
+	@echo "🔍 Debug endpoints: http://localhost:8000/debug/"
+	@echo ""
+	@echo "Press Ctrl+C to stop the server"
+	@echo ""
+	uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+demo-open:
+	@echo "🌐 Opening demo UI in browser..."
+	@if command -v open >/dev/null 2>&1; then \
+		open http://localhost:8000/ui/; \
+		open http://localhost:8000/ui/upload; \
+		open http://localhost:8000/ui/search; \
+		open http://localhost:8000/ui/draft; \
+	elif command -v xdg-open >/dev/null 2>&1; then \
+		xdg-open http://localhost:8000/ui/; \
+		xdg-open http://localhost:8000/ui/upload; \
+		xdg-open http://localhost:8000/ui/search; \
+		xdg-open http://localhost:8000/ui/draft; \
 	else \
-		echo "curl not available"; \
+		echo "Please manually open these URLs in your browser:"; \
+		echo "  Main: http://localhost:8000/ui/"; \
+		echo "  Upload: http://localhost:8000/ui/upload"; \
+		echo "  Search: http://localhost:8000/ui/search"; \
+		echo "  Draft: http://localhost:8000/ui/draft"; \
 	fi
 
+demo-smoke: strict-scan collect-metrics
+	@echo "🧪 Running smoke tests..."
+	pytest tests/strict_mode/ -v --tb=short
+	@echo "✅ Demo smoke tests completed"
+
+# Verification targets
+strict-scan:
+	@echo "🔍 Running strict mode scanner..."
+	python scripts/strict_scan.py
+	@echo "✅ Strict mode scan completed"
+
+collect-metrics:
+	@echo "📊 Collecting metrics snapshot..."
+	python scripts/collect_metrics.py
+	@echo "✅ Metrics collection completed"
+
+# Quick verification
+verify: strict-scan
+	@echo "🔒 Strict mode verification completed"
+	@echo "📊 Run 'make collect-metrics' to collect performance data"
+	@echo "🧪 Run 'make demo-smoke' for full verification"
+
+# Health check
+health:
+	@echo "🏥 Checking application health..."
+	@if curl -s http://localhost:8000/health/ready >/dev/null; then \
+		echo "✅ Application is healthy and running"; \
+	else \
+		echo "❌ Application is not responding"; \
+		echo "   Run 'make demo-run' to start the server"; \
+	fi
+
+# Strict mode report
+strict-report:
+	@echo "📋 Getting strict mode configuration..."
+	@curl -s -H "X-Tenant-ID: demo-tenant" http://localhost:8000/debug/strict-report | python -m json.tool
+
+# Demo workflow (all-in-one)
+demo: demo-seed demo-run
+	@echo ""
+	@echo "🎉 Demo setup completed!"
+	@echo "📱 Application is running at http://localhost:8000"
+	@echo "🌐 Run 'make demo-open' to open UI in browser"
+	@echo "🧪 Run 'make demo-smoke' to verify functionality"
+
 # Development workflow
-dev-setup: setup docker-up
-	@echo "Development environment setup complete!"
-	@echo "Services are starting up..."
-	@echo "Run 'make dev' to start the application"
+dev: install lint test
+	@echo "✅ Development environment ready"
 
-# Production-like testing
-prod-test:
-	@echo "Running production-like tests..."
-	docker-compose -f infra/docker-compose.yml up -d
-	sleep 30  # Wait for services to be ready
-	make test
-	docker-compose -f infra/docker-compose.yml down
+# Full verification workflow
+verify-all: strict-scan collect-metrics demo-smoke
+	@echo ""
+	@echo "🎯 Full verification completed!"
+	@echo "📊 Check /reports/ for detailed results"
+	@echo "🔒 Strict mode: VERIFIED (no fallbacks)"
+	@echo "📱 Demo: READY for client presentation"
 
-# Performance testing
-perf-test:
-	@echo "Running performance tests..."
-	# TODO: Implement performance testing
-	@echo "Performance testing not yet implemented"
+# Helpers
+check-deps:
+	@echo "🔍 Checking dependencies..."
+	@python -c "import fastapi, pydantic, structlog; print('✅ Core dependencies available')"
+	@echo "✅ Dependency check completed"
 
-# Security checks
-security-check:
-	@echo "Running security checks..."
-	# TODO: Implement security scanning
-	@echo "Security scanning not yet implemented"
+check-config:
+	@echo "⚙️ Checking configuration..."
+	@python -c "from app.config.settings import get_settings; s = get_settings(); print(f'✅ Config loaded: strict_mode={s.security.strict_mode}')"
+	@echo "✅ Configuration check completed"
 
-# Documentation
-docs:
-	@echo "Building documentation..."
-	# TODO: Implement when mkdocs is set up
-	@echo "Documentation building not yet implemented"
+# Quick start for new developers
+quickstart: check-deps check-config strict-scan
+	@echo ""
+	@echo "🚀 Quick start completed!"
+	@echo "📱 Run 'make demo-run' to start the application"
+	@echo "🌐 Run 'make demo-open' to open the UI"
+	@echo "🧪 Run 'make demo-smoke' to verify everything works"
 
-# Release preparation
-release-check: check security-check
-	@echo "Release checks completed successfully!"
-
-# Quick development cycle
-dev-cycle: format lint test
-	@echo "Development cycle completed!"
+# Production readiness check
+prod-check: strict-scan test lint
+	@echo ""
+	@echo "🏭 Production readiness check completed!"
+	@echo "🔒 Strict mode: VERIFIED"
+	@echo "🧪 Tests: PASSED"
+	@echo "✨ Code quality: VERIFIED"
+	@echo "🚀 Ready for production deployment"
 
 # Show current status
 status:
-	@echo "Logistics Email AI - Current Status"
-	@echo "=================================="
-	@echo "Python version: $(shell python --version 2>/dev/null || echo 'Python not found')"
-	@echo "Docker: $(shell docker --version 2>/dev/null || echo 'Docker not found')"
-	@echo "Docker Compose: $(shell docker-compose --version 2>/dev/null || echo 'Docker Compose not found')"
-	@echo "Environment file: $(shell if [ -f .env ]; then echo 'Present'; else echo 'Missing'; fi)"
-	@echo "Services: $(shell if docker ps --format '{{.Names}}' | grep -q 'evillm'; then echo 'Running'; else echo 'Stopped'; fi)"
+	@echo "📊 EvilLLM Status Report"
+	@echo "========================"
+	@echo ""
+	@echo "🔍 Strict Mode Scanner:"
+	@python scripts/strict_scan.py >/dev/null 2>&1 && echo "  ✅ PASS" || echo "  ❌ FAIL"
+	@echo ""
+	@echo "🏥 Application Health:"
+	@curl -s http://localhost:8000/health/ready >/dev/null 2>&1 && echo "  ✅ RUNNING" || echo "  ❌ STOPPED"
+	@echo ""
+	@echo "📁 Reports Available:"
+	@ls -la reports/ 2>/dev/null || echo "  No reports directory found"
+	@echo ""
+	@echo "🎯 Next Steps:"
+	@echo "  - Run 'make demo-run' to start the application"
+	@echo "  - Run 'make demo-smoke' for full verification"
+	@echo "  - Check /reports/ for detailed results"

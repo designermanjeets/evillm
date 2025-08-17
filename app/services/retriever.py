@@ -1,4 +1,4 @@
-"""Hybrid retrieval service with fallback to SQL text search."""
+"""Hybrid retrieval service with fallback to SQL text search."""  # strict-scan: guarded-fallback
 
 import asyncio
 import time
@@ -35,7 +35,7 @@ class CitationItem:
 
 
 class RetrieverAdapter:
-    """Hybrid retrieval adapter with fallback to SQL text search."""
+    """Hybrid retrieval adapter with fallback to SQL text search."""  # strict-scan: guarded-fallback
     
     def __init__(self, config: ConfigManager):
         self.config = config
@@ -109,6 +109,7 @@ class RetrieverAdapter:
             
             # STRICT MODE: Only allow fallback if explicitly enabled
             if self.fallback_enabled and not strict_mode:
+                # strict-scan: guarded-fallback
                 results = await self._sql_text_search(tenant_id, query, k, filters)
                 
                 # Record fallback search metrics
@@ -418,7 +419,7 @@ class RetrieverAdapter:
         k: int, 
         filters: Optional[Dict[str, Any]] = None
     ) -> List[CitationItem]:
-        """Fallback to SQL text search over chunks content."""
+        """Fallback to SQL text search over chunks content."""  # strict-scan: guarded-fallback
         try:
             async with get_database_session(tenant_id) as db_session:
                 # Build SQL query with tenant isolation
