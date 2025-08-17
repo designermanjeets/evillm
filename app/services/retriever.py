@@ -2,17 +2,20 @@
 
 import asyncio
 import time
+import uuid
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime
 
 from app.database.session import get_database_session
 from app.config.manager import ConfigManager
 from app.services.bm25_search import BM25SearchService
 from app.services.embeddings import VectorSearchService
 from app.services.fusion import ReciprocalRankFusion
+from app.services.search_metrics import SearchMetrics, SearchQualityMetrics, get_search_metrics_collector
 
 logger = structlog.get_logger(__name__)
 
@@ -51,6 +54,9 @@ class RetrieverAdapter:
         
         # Services will be initialized lazily on first use
         self._services_initialized = False
+        
+        # Initialize metrics collector
+        self.metrics_collector = get_search_metrics_collector()
     
     async def _ensure_services_initialized(self):
         """Ensure search services are initialized."""
@@ -70,25 +76,52 @@ class RetrieverAdapter:
         filters: Optional[Dict[str, Any]] = None
     ) -> List[CitationItem]:
         """Retrieve top-k results with citations using hybrid search."""
+        query_id = str(uuid.uuid4())
+        start_time = time.time()
+        
         try:
             # Ensure services are initialized
             await self._ensure_services_initialized()
             
             # Try hybrid search first if available
             if self._has_hybrid_search():
-                results = await self._hybrid_search(tenant_id, query, k, filters)
+                results = await self._hybrid_search(tenant_id, query, k, filters, query_id, start_time)
                 if results:
                     return results
             
             # Fallback to SQL text search
             if self.fallback_enabled:
-                return await self._sql_text_search(tenant_id, query, k, filters)
+                results = await self._sql_text_search(tenant_id, query, k, filters)
+                
+                # Record fallback search metrics
+                total_time = (time.time() - start_time) * 1000
+                self._record_search_metrics(
+                    query_id, tenant_id, query, k, total_time, 0, 0, 0, 
+                    len(results), 'fallback', True, None
+                )
+                
+                return results
             
             # No results available
             logger.warning("No retrieval services available", tenant_id=tenant_id)
+            
+            # Record failed search metrics
+            total_time = (time.time() - start_time) * 1000
+            self._record_search_metrics(
+                query_id, tenant_id, query, k, total_time, 0, 0, 0, 
+                0, 'none', False, "No retrieval services available"
+            )
+            
             return []
             
         except Exception as e:
+            # Record error metrics
+            total_time = (time.time() - start_time) * 1000
+            self._record_search_metrics(
+                query_id, tenant_id, query, k, total_time, 0, 0, 0, 
+                0, 'error', False, str(e)
+            )
+            
             logger.error("Retrieval failed", error=str(e), tenant_id=tenant_id)
             return []
     
@@ -102,7 +135,9 @@ class RetrieverAdapter:
         tenant_id: str, 
         query: str, 
         k: int, 
-        filters: Optional[Dict[str, Any]] = None
+        filters: Optional[Dict[str, Any]] = None,
+        query_id: Optional[str] = None,
+        start_time: Optional[float] = None
     ) -> List[CitationItem]:
         """Perform hybrid search using BM25 + vector search with performance tracking."""
         start_time = time.time()
@@ -178,6 +213,26 @@ class RetrieverAdapter:
                        final_results=len(final_results),
                        metrics=search_metrics)
             
+            # Record search metrics if query_id and start_time provided
+            if query_id and start_time:
+                total_time = (time.time() - start_time) * 1000
+                self._record_search_metrics(
+                    query_id, tenant_id, query, k, total_time,
+                    search_metrics["bm25_time_ms"],
+                    search_metrics["vector_time_ms"],
+                    search_metrics["fusion_time_ms"],
+                    len(final_results), 'hybrid', True, None
+                )
+                
+                # Generate and record quality metrics
+                if final_results:
+                    relevance_scores = [result.score for result in final_results]
+                    citation_coverage = 1.0  # All results have citations in hybrid search
+                    quality_metrics = self.metrics_collector.generate_quality_metrics(
+                        query_id, tenant_id, relevance_scores, citation_coverage
+                    )
+                    self.metrics_collector.record_quality_metrics(quality_metrics)
+            
             return final_results
             
         except Exception as e:
@@ -187,6 +242,36 @@ class RetrieverAdapter:
                         tenant_id=tenant_id,
                         metrics=search_metrics)
             return []
+    
+    def _record_search_metrics(self, query_id: str, tenant_id: str, query: str, k: int,
+                              total_time_ms: float, bm25_time_ms: float, vector_time_ms: float,
+                              fusion_time_ms: float, final_results: int, search_type: str,
+                              success: bool, error_message: Optional[str]):
+        """Record search operation metrics."""
+        try:
+            metrics = SearchMetrics(
+                query_id=query_id,
+                tenant_id=tenant_id,
+                query=query,
+                timestamp=datetime.now(),
+                total_time_ms=total_time_ms,
+                bm25_time_ms=bm25_time_ms,
+                vector_time_ms=vector_time_ms,
+                fusion_time_ms=fusion_time_ms,
+                bm25_results=0,  # Will be updated if available
+                vector_results=0,  # Will be updated if available
+                fused_results=0,   # Will be updated if available
+                final_results=final_results,
+                k_requested=k,
+                search_type=search_type,
+                success=success,
+                error_message=error_message
+            )
+            
+            self.metrics_collector.record_search_metrics(metrics)
+            
+        except Exception as e:
+            logger.error("Failed to record search metrics", error=str(e))
     
     def get_search_metrics(self) -> Dict[str, Any]:
         """Get search performance metrics."""
@@ -198,6 +283,31 @@ class RetrieverAdapter:
             "fallback_enabled": self.fallback_enabled,
             "max_results": self.max_results
         }
+    
+    def get_performance_summary(self, tenant_id: str, time_window: str = '24h') -> Dict[str, Any]:
+        """Get search performance summary for a tenant."""
+        try:
+            summary = self.metrics_collector.get_performance_summary(tenant_id, time_window)
+            return summary.__dict__
+        except Exception as e:
+            logger.error("Failed to get performance summary", error=str(e))
+            return {}
+    
+    def get_global_metrics(self, time_window: str = '24h') -> Dict[str, Any]:
+        """Get global search metrics across all tenants."""
+        try:
+            return self.metrics_collector.get_global_metrics(time_window)
+        except Exception as e:
+            logger.error("Failed to get global metrics", error=str(e))
+            return {}
+    
+    def export_metrics(self, tenant_id: Optional[str] = None, time_window: str = '24h') -> Dict[str, Any]:
+        """Export search metrics for external systems."""
+        try:
+            return self.metrics_collector.export_metrics(tenant_id, time_window)
+        except Exception as e:
+            logger.error("Failed to export metrics", error=str(e))
+            return {'error': str(e)}
     
     def _get_embedding_provider(self):
         """Get embedding provider for vector search."""

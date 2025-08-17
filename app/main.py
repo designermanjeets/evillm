@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 import structlog
 
 from app.config.settings import get_settings
-from app.routers import health, draft, eval_router, ingestion
+from app.routers import health, draft, eval_router, ingestion, search_metrics
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.tenant_isolation import TenantIsolationMiddleware
 
@@ -95,6 +95,7 @@ def create_app() -> FastAPI:
     app.include_router(draft.router, prefix="/draft", tags=["draft"])
     app.include_router(eval_router.router, prefix="/eval", tags=["evaluation"])
     app.include_router(ingestion.router, prefix="/ingestion", tags=["ingestion"])
+    app.include_router(search_metrics.router, prefix="/search-metrics", tags=["search-metrics"])
     
     return app
 

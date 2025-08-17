@@ -765,6 +765,18 @@ Project Manager"""
         assert "bm25_service_available" in metrics
         assert "vector_service_available" in metrics
         assert "fusion_engine_configured" in metrics
+        
+        # Test performance summary and metrics export
+        performance_summary = retriever.get_performance_summary("tenant-123", "24h")
+        assert isinstance(performance_summary, dict)
+        
+        global_metrics = retriever.get_global_metrics("24h")
+        assert isinstance(global_metrics, dict)
+        
+        exported_metrics = retriever.export_metrics("tenant-123", "24h")
+        assert isinstance(exported_metrics, dict)
+        assert "tenant_id" in exported_metrics
+        assert exported_metrics["tenant_id"] == "tenant-123"
     
     @pytest.mark.asyncio
     async def test_llm_streams_and_collects_used_citations(self, mock_workflow):

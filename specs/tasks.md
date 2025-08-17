@@ -262,6 +262,7 @@ This document outlines the ordered, atomic tasks required to implement the Logis
 - TASK-7.3: RRF fusion + optional reranker interface ✅
 - TASK-7.4: Citation mapping and metadata ✅
 - TASK-7.5: Performance optimization and monitoring ✅
+- TASK-7.6: Search performance metrics and API ✅
 
 ### TASK-8: LangGraph Draft Agent Framework
 **Goal**: Implement draft flow orchestration with sub-agents and streaming
