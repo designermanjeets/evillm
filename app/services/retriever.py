@@ -28,6 +28,8 @@ class CitationItem:
     object_key: str
     score: float
     content_preview: str
+    snippet: str  # EARS-AGT-4: snippet field for UI display
+    tenant_id: str  # EARS-AGT-4: tenant_id for isolation
     chunk_id: Optional[str] = None
     attachment_id: Optional[str] = None
 
@@ -370,13 +372,15 @@ class RetrieverAdapter:
         citations = []
         
         for result in search_results:
-            # Create citation with enhanced metadata
+            # Create citation with EARS-AGT-4 required fields
             citation = CitationItem(
                 email_id=result["citations"]["email_id"],
                 chunk_uid=result["citations"]["chunk_id"],
                 object_key=f"search_result_{result['id']}",
                 score=result["score"],
-                content_preview=result["citations"]["content"][:200] + "..." if len(result["citations"]["content"]) > 200 else result["citations"]["content"]
+                content_preview=result["citations"]["content"][:200] + "..." if len(result["citations"]["content"]) > 200 else result["citations"]["content"],
+                snippet=result["citations"]["content"][:150] + "..." if len(result["citations"]["content"]) > 150 else result["citations"]["content"],
+                tenant_id=result["citations"]["tenant_id"]
             )
             
             # Add source information to chunk_id if available
@@ -453,13 +457,15 @@ class RetrieverAdapter:
                     else:
                         score = 0.5
                     
-                    # Create citation item
+                    # Create citation item with EARS-AGT-4 required fields
                     citation = CitationItem(
                         email_id=row.email_id,
                         chunk_uid=row.chunk_uid,
                         object_key=row.object_key,
                         score=score,
                         content_preview=row.content[:200] + "..." if len(row.content) > 200 else row.content,
+                        snippet=row.content[:150] + "..." if len(row.content) > 150 else row.content,
+                        tenant_id=row.tenant_id,
                         chunk_id=row.chunk_id,
                         attachment_id=row.attachment_id
                     )

@@ -589,40 +589,53 @@ class TestDraftStreamingService:
             assert "type" in data
     
     @pytest.mark.asyncio
-    async def test_retriever_returns_citations_patch(self, mock_workflow):
-        """Test EARS-AGT-4: Retriever returns citations patch."""
-        from app.services.retriever import RetrieverAdapter, CitationItem
-        from app.config.manager import ConfigManager
+    async def test_retriever_returns_citations_patch(self):
+        """Test EARS-AGT-4: RetrieverAdapter returns citations patch with proper structure."""
+        from app.services.retriever import CitationItem
         
-        # Create mock config and retriever
-        config = ConfigManager()
-        retriever = RetrieverAdapter(config)
+        # Mock retriever to return test citations
+        mock_citations = [
+            CitationItem(
+                email_id="email-123",
+                chunk_uid="chunk-456",
+                object_key="test-object",
+                score=0.95,
+                content_preview="Test content preview...",
+                snippet="Test snippet content...",
+                tenant_id="tenant-123",
+                chunk_id="chunk-456",
+                attachment_id=None
+            )
+        ]
         
-        # Create workflow with retriever
-        workflow = DraftWorkflow(config, retriever=retriever)
-        
-        # Execute retriever node
-        state = DraftWorkflowState("tenant-123", "email-123", "test query")
-        state = await workflow._retriever_node(state)
-        
-        # Verify retriever step results
-        retriever_results = state.step_results.get("retriever", {})
-        assert "query" in retriever_results
-        assert "results" in retriever_results
-        assert "total_hits" in retriever_results
-        
-        # Verify citations are properly structured
-        citations = state.citations
-        assert isinstance(citations, list)
-        
-        # In stub mode, citations might be empty, but structure should be correct
-        if citations:
-            for citation in citations:
-                            assert hasattr(citation, 'email_id')
-            assert hasattr(citation, 'chunk_uid')
-            assert hasattr(citation, 'object_key')
-            assert hasattr(citation, 'score')
-            assert hasattr(citation, 'content_preview')
+        with patch.object(self.workflow.retriever, 'retrieve', return_value=mock_citations):
+            # Create test state
+            state = DraftWorkflowState(
+                tenant_id="tenant-123",
+                email_id="email-123",
+                query="test query"
+            )
+            
+            # Run retriever node
+            result_state = await self.workflow._retriever_node(state)
+            
+            # Verify citations patch structure
+            assert hasattr(result_state, 'retrieval')
+            assert result_state.retrieval['query'] == "test query"
+            assert len(result_state.retrieval['results']) == 1
+            
+            # Verify citation item structure
+            citation = result_state.retrieval['results'][0]
+            assert citation['chunk_uid'] == "chunk-456"
+            assert citation['email_id'] == "email-123"
+            assert citation['object_key'] == "test-object"
+            assert citation['score'] == 0.95
+            assert citation['snippet'] == "Test snippet content..."
+            assert citation['tenant_id'] == "tenant-123"
+            
+            # Verify state progression
+            assert result_state.current_step == "numeric_verifier"
+            assert result_state.citations == mock_citations
     
     @pytest.mark.asyncio
     async def test_eval_gate_blocks_ungrounded(self, mock_workflow):
@@ -659,13 +672,15 @@ The new schedule reflects the revised requirements and should accommodate all st
 Best regards,
 Project Manager"""
         
-        used_citations = [
+                    used_citations = [
             CitationItem(
                 email_id="email-1",
                 chunk_uid="chunk-1",
                 object_key="key-1",
                 score=0.9,
-                content_preview="Test content 1"
+                content_preview="Test content 1",
+                snippet="Test content 1",
+                tenant_id="tenant-123"
             )
         ]
         retrieval_results = [
@@ -674,7 +689,9 @@ Project Manager"""
                 chunk_uid="chunk-1",
                 object_key="key-1",
                 score=0.9,
-                content_preview="Test content 1"
+                content_preview="Test content 1",
+                snippet="Test content 1",
+                tenant_id="tenant-123"
             )
         ]
         
@@ -796,20 +813,24 @@ Project Manager"""
         
         # Set up state with citations
         state = DraftWorkflowState("tenant-123", "email-123", "test query")
-        state.citations = [
+                state.citations = [
             CitationItem(
                 email_id="email-1",
                 chunk_uid="chunk-1",
                 object_key="key-1",
                 score=0.9,
-                content_preview="Test content 1"
+                content_preview="Test content 1",
+                snippet="Test content 1",
+                tenant_id="tenant-123"
             ),
             CitationItem(
-                email_id="email-2", 
+                email_id="email-2",
                 chunk_uid="chunk-2",
                 object_key="key-2",
                 score=0.8,
-                content_preview="Test content 2"
+                content_preview="Test content 2",
+                snippet="Test content 2",
+                tenant_id="tenant-123"
             )
         ]
         

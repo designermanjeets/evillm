@@ -44,8 +44,10 @@ class DraftWorkflowState:
     created_at: datetime = None
     updated_at: datetime = None
     token_count: int = 0
+    tokens_used: int = 0  # EARS-AGT-5: tokens used in draft generation
     cost_estimate: float = 0.0
     audit_trace: Optional[Dict[str, Any]] = None
+    retrieval: Optional[Dict[str, Any]] = None  # EARS-AGT-4: citations patch
     
     def __post_init__(self):
         if self.step_results is None:
@@ -323,6 +325,7 @@ class DraftWorkflow:
             # Track citation usage for audit
             self.audit_service.record_citation_usage(citations, [])
             
+            # EARS-AGT-4: Return citations patch with proper structure
             step_results = state.step_results.copy()
             step_results["retriever"] = {
                 "query": query,
@@ -332,10 +335,29 @@ class DraftWorkflow:
                 "query_length": len(query)
             }
             
+            # Create citations patch with citation_items array
+            citations_patch = {
+                "retrieval": {
+                    "query": query,
+                    "results": [
+                        {
+                            "chunk_uid": c.chunk_uid,
+                            "email_id": c.email_id,
+                            "attachment_id": c.attachment_id,
+                            "object_key": c.object_key,
+                            "score": c.score,
+                            "snippet": c.snippet,
+                            "tenant_id": c.tenant_id
+                        } for c in citations
+                    ]
+                }
+            }
+            
             return state.patch(
                 current_step="numeric_verifier",
                 step_results=step_results,
-                citations=citations
+                citations=citations,
+                **citations_patch
             )
             
         except Exception as e:
@@ -410,6 +432,7 @@ class DraftWorkflow:
                 step_results=step_results,
                 final_draft=draft_response.get("content", ""),
                 token_count=draft_response.get("token_count", 0),
+                tokens_used=draft_response.get("token_count", 0),  # EARS-AGT-5: tokens used
                 cost_estimate=draft_response.get("cost_estimate", 0.0),
                 used_citations=used_citations
             )
@@ -487,11 +510,25 @@ class DraftWorkflow:
                 for reason in evaluation.reasons:
                     validation_errors.append(f"Evaluation failed: {reason}")
             
-            return state.patch(
-                current_step="completed",
-                step_results=step_results,
-                validation_errors=validation_errors
-            )
+            # EARS-AGT-6: Fail-closed policy - only pass if evaluation succeeds
+            if evaluation.passed:
+                return state.patch(
+                    current_step="completed",
+                    step_results=step_results,
+                    validation_errors=validation_errors
+                )
+            else:
+                # Block the draft - fail-closed policy
+                logger.warning("Draft blocked by evaluation gate", 
+                             tenant_id=state.tenant_id,
+                             scores=evaluation.scores.dict(),
+                             reasons=evaluation.reasons)
+                
+                return state.patch(
+                    current_step="blocked",
+                    step_results=step_results,
+                    validation_errors=validation_errors
+                )
             
         except Exception as e:
             logger.error("Eval gate failed", error=str(e), tenant_id=state.tenant_id)
@@ -560,7 +597,7 @@ class DraftWorkflow:
         return "\n".join(formatted)
     
     async def _generate_draft(self, prompt: str, state: DraftWorkflowState) -> Dict[str, Any]:
-        """Generate draft using LLM with citation tracking."""
+        """Generate draft using LLM with streaming support and citation tracking."""
         try:
             # Security: Sanitize prompt to prevent injection
             sanitized_prompt = self._sanitize_prompt(prompt)
@@ -577,23 +614,36 @@ class DraftWorkflow:
             
             user_message = LLMMessage(role="user", content=sanitized_prompt)
             
-            # Generate draft using LLM with streaming support
-            response = await self.llm_client.chat_completion([system_message, user_message])
+            # EARS-AGT-5: Generate draft using LLM with streaming support
+            content = ""
+            tokens_used = 0
+            
+            # Stream tokens and accumulate content
+            async for token in self.llm_client.stream_chat([system_message, user_message]):
+                content += token
+                tokens_used += 1
+                
+                # Security: Cap tokens to prevent resource exhaustion
+                if tokens_used > self.config.get("models.llm.max_tokens", 1000):
+                    logger.warning("Token limit exceeded, truncating response", 
+                                 tenant_id=state.tenant_id, tokens_used=tokens_used)
+                    break
             
             # Security: Analyze response for citation usage and grounding
-            used_citations = self._analyze_citation_usage(response.content, state.citations)
+            used_citations = self._analyze_citation_usage(content, state.citations)
             
             # Security: Validate response doesn't contain ungrounded claims
             if not used_citations:
                 logger.warning("Generated draft has no citations - may be ungrounded", 
                              tenant_id=state.tenant_id)
             
+            # EARS-AGT-5: Return with tokens_used and used_citations
             return {
-                "content": response.content,
-                "token_count": response.tokens_used,
-                "cost_estimate": response.cost_estimate,
+                "content": content,
+                "token_count": tokens_used,
+                "cost_estimate": self._estimate_cost(tokens_used),
                 "used_citations": used_citations,
-                "model_used": response.model_used,
+                "model_used": self.llm_client.model,
                 "grounding_score": len(used_citations) / max(len(state.citations), 1)
             }
             
@@ -636,6 +686,25 @@ class DraftWorkflow:
         # Return top citations by relevance score
         used_citations.sort(key=lambda x: x.score, reverse=True)
         return used_citations[:min(5, len(used_citations))]  # Limit to top 5
+    
+    def _estimate_cost(self, tokens: int) -> float:
+        """Estimate cost based on provider and model."""
+        # Rough cost estimates (these would be more accurate in production)
+        provider = getattr(self.llm_client, 'provider', 'stub')
+        model = getattr(self.llm_client, 'model', 'stub')
+        
+        if provider == "openai":
+            if "gpt-4" in model:
+                return tokens * 0.00003  # $0.03 per 1K tokens
+            else:
+                return tokens * 0.000002  # $0.002 per 1K tokens
+        elif provider == "anthropic":
+            if "claude-3" in model:
+                return tokens * 0.000015  # $0.015 per 1K tokens
+            else:
+                return tokens * 0.000008  # $0.008 per 1K tokens
+        else:
+            return 0.0  # Local models have no API cost
     
 
     

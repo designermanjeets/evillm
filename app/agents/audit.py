@@ -54,6 +54,10 @@ class AuditTrace:
     citation_usage: List[CitationUsage]
     performance_metrics: Dict[str, Any]
     final_state: Dict[str, Any]
+    # EARS-AGT-7: Additional required fields
+    tools: List[Dict[str, Any]] = None  # Tool calls made during workflow
+    policy: Dict[str, Any] = None  # Policy scores, pass, reasons
+    tokens: Dict[str, Any] = None  # Prompt and completion token counts
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -200,6 +204,27 @@ class AuditService:
             if eval_failures:
                 self.metrics["drafts_failed_eval_total"] += 1
         
+        # EARS-AGT-7: Extract policy information from eval_gate step
+        policy_info = None
+        if hasattr(final_state, 'step_results') and 'eval_gate' in final_state.step_results:
+            eval_data = final_state.step_results['eval_gate'].get('evaluation', {})
+            policy_info = {
+                "scores": eval_data.get('scores', {}),
+                "pass": eval_data.get('passed', False),
+                "reasons": eval_data.get('reasons', [])
+            }
+        
+        # EARS-AGT-7: Extract token information
+        tokens_info = None
+        if hasattr(final_state, 'tokens_used'):
+            tokens_info = {
+                "prompt": 0,  # Could be enhanced to track actual prompt tokens
+                "completion": final_state.tokens_used
+            }
+        
+        # EARS-AGT-7: Extract tool calls (placeholder for future enhancement)
+        tools_info = []  # Could be enhanced to track actual tool calls
+        
         audit_trace = AuditTrace(
             workflow_id=workflow_id,
             tenant_id=tenant_id,
@@ -212,7 +237,10 @@ class AuditService:
             patch_info=self._patch_info.copy(),
             citation_usage=self._citation_usage.copy(),
             performance_metrics=self.metrics.copy(),
-            final_state=final_state_dict
+            final_state=final_state_dict,
+            tools=tools_info,
+            policy=policy_info,
+            tokens=tokens_info
         )
         
         return audit_trace
