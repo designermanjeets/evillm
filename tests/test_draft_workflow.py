@@ -652,6 +652,8 @@ class TestDraftStreamingService:
 
 Thank you for your inquiry. Based on the provided context, I can confirm that the project timeline has been updated.
 
+Test content 1 shows that the requirements have been revised.
+
 The new schedule reflects the revised requirements and should accommodate all stakeholders' needs.
 
 Best regards,

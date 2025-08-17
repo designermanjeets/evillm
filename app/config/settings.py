@@ -67,11 +67,23 @@ class SearchSettings(BaseSettings):
     weaviate_url: str = Field(default="http://localhost:8080", env="WEAVIATE_URL")
     weaviate_api_key: Optional[str] = Field(default=None, env="WEAVIATE_API_KEY")
     
+    # Quality assurance thresholds
+    quality_thresholds_hit_at_5: float = Field(default=0.65, env="SEARCH_QUALITY_THRESHOLD_HIT_AT_5")
+    quality_thresholds_mrr_at_10: float = Field(default=0.55, env="SEARCH_QUALITY_THRESHOLD_MRR_AT_10")
+    quality_thresholds_ndcg_at_10: float = Field(default=0.60, env="SEARCH_QUALITY_THRESHOLD_NDCG_AT_10")
+    
     @validator("vector_store")
     def validate_vector_store(cls, v: str) -> str:
         """Validate vector store provider."""
         if v not in ["qdrant", "pinecone", "weaviate"]:
             raise ValueError("Vector store must be qdrant, pinecone, or weaviate")
+        return v
+    
+    @validator("quality_thresholds_hit_at_5", "quality_thresholds_mrr_at_10", "quality_thresholds_ndcg_at_10")
+    def validate_quality_thresholds(cls, v: float) -> float:
+        """Validate quality thresholds are between 0 and 1."""
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("Quality thresholds must be between 0.0 and 1.0")
         return v
 
 

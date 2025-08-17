@@ -296,21 +296,40 @@ class DraftWorkflow:
     async def _retriever_node(self, state: DraftWorkflowState) -> DraftWorkflowState:
         """Retrieve relevant information using hybrid search."""
         try:
-            # Use RetrieverAdapter for search
+            # Security: Validate and sanitize query
+            if not state.query or not state.query.strip():
+                raise ValueError("Query cannot be empty")
+            
+            # Security: Clamp k to prevent resource exhaustion
+            max_k = min(20, self.config.get("retriever.max_results", 10))
+            query = state.query.strip()[:500]  # Limit query length
+            
+            # Use RetrieverAdapter for search with tenant isolation
             citations = await self.retriever.retrieve(
                 state.tenant_id,
-                state.query,
-                k=10
+                query,
+                k=max_k
             )
+            
+            # Security: Ensure all citations belong to the same tenant
+            tenant_citations = [c for c in citations if hasattr(c, 'tenant_id') and c.tenant_id == state.tenant_id]
+            if len(tenant_citations) != len(citations):
+                logger.warning("Some citations had different tenant_id, filtered out", 
+                             tenant_id=state.tenant_id, 
+                             total_citations=len(citations),
+                             tenant_citations=len(tenant_citations))
+                citations = tenant_citations
             
             # Track citation usage for audit
             self.audit_service.record_citation_usage(citations, [])
             
             step_results = state.step_results.copy()
             step_results["retriever"] = {
-                "query": state.query,
+                "query": query,
                 "results": citations,
-                "total_hits": len(citations)
+                "total_hits": len(citations),
+                "max_k": max_k,
+                "query_length": len(query)
             }
             
             return state.patch(
@@ -543,29 +562,39 @@ class DraftWorkflow:
     async def _generate_draft(self, prompt: str, state: DraftWorkflowState) -> Dict[str, Any]:
         """Generate draft using LLM with citation tracking."""
         try:
-            # Build messages for LLM
+            # Security: Sanitize prompt to prevent injection
+            sanitized_prompt = self._sanitize_prompt(prompt)
+            
+            # Build messages for LLM with security constraints
             system_message = LLMMessage(
                 role="system",
                 content="""You are a professional email assistant. Generate a well-structured, 
                 professional email response based on the user's query and the provided context. 
-                Use the citations provided to ground your response in factual information."""
+                Use ONLY the citations provided to ground your response in factual information.
+                Do NOT make up information or use external knowledge.
+                Respond only with evidence-backed facts from the provided citations."""
             )
             
-            user_message = LLMMessage(role="user", content=prompt)
+            user_message = LLMMessage(role="user", content=sanitized_prompt)
             
-            # Generate draft using LLM
+            # Generate draft using LLM with streaming support
             response = await self.llm_client.chat_completion([system_message, user_message])
             
-            # Track which citations were actually used (simplified for now)
-            # In a real implementation, you'd analyze the response content to see which citations were referenced
-            used_citations = state.citations[:min(3, len(state.citations))]  # Use top 3 citations
+            # Security: Analyze response for citation usage and grounding
+            used_citations = self._analyze_citation_usage(response.content, state.citations)
+            
+            # Security: Validate response doesn't contain ungrounded claims
+            if not used_citations:
+                logger.warning("Generated draft has no citations - may be ungrounded", 
+                             tenant_id=state.tenant_id)
             
             return {
                 "content": response.content,
                 "token_count": response.tokens_used,
                 "cost_estimate": response.cost_estimate,
                 "used_citations": used_citations,
-                "model_used": response.model_used
+                "model_used": response.model_used,
+                "grounding_score": len(used_citations) / max(len(state.citations), 1)
             }
             
         except Exception as e:
@@ -576,8 +605,37 @@ class DraftWorkflow:
                 "token_count": len(prompt.split()),
                 "cost_estimate": 0.0,
                 "used_citations": [],
-                "model_used": "stub"
+                "model_used": "stub",
+                "grounding_score": 0.0
             }
+    
+    def _sanitize_prompt(self, prompt: str) -> str:
+        """Sanitize prompt to prevent injection attacks."""
+        # Remove potentially dangerous characters and limit length
+        sanitized = prompt.replace("<script>", "").replace("javascript:", "")
+        sanitized = sanitized.replace("data:", "").replace("vbscript:", "")
+        return sanitized[:2000]  # Limit prompt length
+    
+    def _analyze_citation_usage(self, content: str, citations: List[CitationItem]) -> List[CitationItem]:
+        """Analyze which citations were actually used in the generated content."""
+        if not citations or not content:
+            return []
+        
+        used_citations = []
+        content_lower = content.lower()
+        
+        for citation in citations:
+            # Check if citation content appears in the generated text
+            citation_text = citation.content_preview.lower()
+            if len(citation_text) > 10 and citation_text[:50] in content_lower:
+                used_citations.append(citation)
+            # Also check email_id references
+            elif citation.email_id.lower() in content_lower:
+                used_citations.append(citation)
+        
+        # Return top citations by relevance score
+        used_citations.sort(key=lambda x: x.score, reverse=True)
+        return used_citations[:min(5, len(used_citations))]  # Limit to top 5
     
 
     

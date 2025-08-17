@@ -30,8 +30,8 @@ class EvalGate:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.enabled = config.get("eval.enabled", True)
-        self.grounding_threshold = config.get("eval.grounding_threshold", 0.6)
-        self.completeness_threshold = config.get("eval.completeness_threshold", 0.7)
+        self.grounding_threshold = config.get("eval.thresholds.grounding", 0.70)
+        self.completeness_threshold = config.get("eval.thresholds.completeness", 0.65)
         self.tone_threshold = config.get("eval.tone_threshold", 0.8)
         self.policy_threshold = config.get("eval.policy_threshold", 0.9)
         self.overall_threshold = config.get("eval.overall_threshold", 0.7)

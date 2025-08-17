@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 import structlog
 
 from app.config.settings import get_settings
-from app.routers import health, draft, eval_router, ingestion, search_metrics
+from app.routers import health, draft, eval_router, ingestion, search_metrics, search_qa
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.tenant_isolation import TenantIsolationMiddleware
 
@@ -44,6 +44,16 @@ async def lifespan(app: FastAPI):
     logger.info("Application settings loaded", 
                 environment=settings.environment,
                 log_level=settings.monitoring.log_level)
+    
+    # Initialize search QA service with settings
+    from app.services.search_qa import initialize_search_qa
+    search_config = {
+        "quality_thresholds_hit_at_5": settings.search.quality_thresholds_hit_at_5,
+        "quality_thresholds_mrr_at_10": settings.search.quality_thresholds_mrr_at_10,
+        "quality_thresholds_ndcg_at_10": settings.search.quality_thresholds_ndcg_at_10
+    }
+    initialize_search_qa(search_config)
+    logger.info("Search QA service initialized", config=search_config)
     
     yield
     
@@ -96,6 +106,7 @@ def create_app() -> FastAPI:
     app.include_router(eval_router.router, prefix="/eval", tags=["evaluation"])
     app.include_router(ingestion.router, prefix="/ingestion", tags=["ingestion"])
     app.include_router(search_metrics.router, prefix="/search-metrics", tags=["search-metrics"])
+    app.include_router(search_qa.router, prefix="/search-qa", tags=["search-qa"])
     
     return app
 
