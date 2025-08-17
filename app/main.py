@@ -3,6 +3,7 @@
 import time
 from contextlib import asynccontextmanager
 from typing import Dict, Any
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,7 +11,7 @@ from fastapi.responses import JSONResponse
 import structlog
 
 from app.config.settings import get_settings
-from app.routers import health, draft, eval_router, ingestion, search_metrics, search_qa, ui, debug
+from app.routers import health, draft, eval_router, ingestion, search_metrics, search_qa, ui, debug, api_alias
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.tenant_isolation import TenantIsolationMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
@@ -84,10 +85,13 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     
-    # Add custom middleware
+    # Add environment to app state for tenant resolution
+    app.state.env = os.getenv("ENV", "dev")
+    
+    # Add middleware
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(TenantIsolationMiddleware)
-    app.add_middleware(RateLimitMiddleware, requests_per_minute=settings.security.rate_limit_per_minute)
+    app.add_middleware(RateLimitMiddleware, requests_per_minute=60)
     
     # Add CSP headers middleware
     @app.middleware("http")
@@ -171,6 +175,7 @@ def create_app() -> FastAPI:
     app.include_router(search_qa.router, prefix="/search-qa", tags=["search-qa"])
     app.include_router(ui.router, tags=["ui"])
     app.include_router(debug.router, tags=["debug"])
+    app.include_router(api_alias.router, tags=["api-alias"])
     
     return app
 

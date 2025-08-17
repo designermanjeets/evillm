@@ -4,8 +4,40 @@ from typing import Callable, Optional
 from fastapi import Request, Response, HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
 import structlog
+import uuid
 
 logger = structlog.get_logger(__name__)
+
+DEV_DEFAULT_TENANT = "demo"
+
+def resolve_tenant_id(request) -> Optional[str]:
+    """Resolve tenant ID from multiple sources with dev-friendly fallbacks."""
+    # 1) header wins for APIs
+    tid = request.headers.get("X-Tenant-ID")
+
+    # 2) query/cookie support for UI
+    if not tid:
+        tid = request.query_params.get("tenant") or request.cookies.get("tenant_id")
+
+    if not tid:
+        # dev default for UI landing when nothing provided
+        if (getattr(request.app.state, "env", "dev") == "dev"):
+            tid = DEV_DEFAULT_TENANT
+        else:
+            return None
+
+    # Accept UUIDs as-is
+    try:
+        uuid.UUID(str(tid))
+        return str(tid)
+    except Exception:
+        pass
+
+    # In dev, allow slug -> deterministic UUID (no DB needed)
+    if getattr(request.app.state, "env", "dev") == "dev":
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"tenant:{tid}"))
+
+    return None
 
 
 class TenantIsolationMiddleware(BaseHTTPMiddleware):
@@ -17,8 +49,8 @@ class TenantIsolationMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process request and enforce tenant isolation."""
-        # Get tenant ID from header
-        tenant_id = request.headers.get(self.header_name)
+        # Get tenant ID from multiple sources
+        tenant_id = resolve_tenant_id(request)
         
         # Skip tenant check for health and public endpoints
         if self._is_public_endpoint(request.url.path):
@@ -31,22 +63,10 @@ class TenantIsolationMiddleware(BaseHTTPMiddleware):
                 path=request.url.path,
                 method=request.method,
             )
-            raise HTTPException(
+            return Response(
+                content='{"detail": "Missing or invalid tenant"}',
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Tenant ID is required"
-            )
-        
-        # Validate tenant ID format (UUID)
-        if not self._is_valid_uuid(tenant_id):
-            logger.warning(
-                "Invalid tenant ID format",
-                tenant_id=tenant_id,
-                path=request.url.path,
-                method=request.method,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid tenant ID format"
+                media_type="application/json"
             )
         
         # Add tenant ID to request state
@@ -64,7 +84,7 @@ class TenantIsolationMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         
         # Add tenant ID to response headers for debugging
-        response.headers["X-Tenant-ID"] = tenant_id
+        response.headers["X-Tenant-Resolved"] = tenant_id
         
         return response
     
@@ -78,15 +98,6 @@ class TenantIsolationMiddleware(BaseHTTPMiddleware):
             "/",
         ]
         return any(path.startswith(public_path) for public_path in public_paths)
-    
-    def _is_valid_uuid(self, uuid_string: str) -> bool:
-        """Validate UUID format."""
-        try:
-            import uuid
-            uuid.UUID(uuid_string)
-            return True
-        except ValueError:
-            return False
 
 
 def get_tenant_id(request: Request) -> str:
