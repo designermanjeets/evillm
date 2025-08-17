@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+
+{% block title %}Search Documents{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+    <div class="bg-white shadow-lg rounded-lg p-6">
+        <h1 class="text-3xl font-bold text-gray-900 mb-6">Search Documents</h1>
+        
+        <!-- Search Interface -->
+        <div class="space-y-6">
+            <!-- Query Input -->
+            <div>
+                <label for="search-query" class="block text-sm font-medium text-gray-700 mb-2">Search Query</label>
+                <div class="flex space-x-3">
+                    <input type="text" id="search-query" placeholder="Enter your search query..." 
+                           class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                    <button id="search-btn" class="bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 transition-colors">
+                        Search
+                    </button>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                    <label for="date-from" class="block text-sm font-medium text-gray-700 mb-2">Date From</label>
+                    <input type="date" id="date-from" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label for="date-to" class="block text-sm font-medium text-gray-700 mb-2">Date To</label>
+                    <input type="date" id="date-to" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label for="domain-filter" class="block text-sm font-medium text-gray-700 mb-2">Domain</label>
+                    <select id="domain-filter" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">All Domains</option>
+                        <option value="example.com">example.com</option>
+                        <option value="company.org">company.org</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Has Attachment</label>
+                    <div class="flex items-center space-x-3">
+                        <input type="checkbox" id="has-attachment" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <label for="has-attachment" class="text-sm text-gray-700">Show only emails with attachments</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quality Summary -->
+        <div id="quality-summary" class="mt-6 p-4 bg-gray-50 rounded-lg hidden">
+            <h3 class="text-lg font-medium text-gray-900 mb-3">Search Quality Summary</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-green-600" id="hit-at-5">-</div>
+                    <div class="text-sm text-gray-600">Hit@5 Score</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-blue-600" id="mrr-at-10">-</div>
+                    <div class="text-sm text-gray-600">MRR@10 Score</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-purple-600" id="ndcg-at-10">-</div>
+                    <div class="text-sm text-gray-600">NDCG@10 Score</div>
+                </div>
+            </div>
+            <div class="mt-3 text-center">
+                <span id="quality-status" class="px-3 py-1 rounded-full text-sm font-medium"></span>
+            </div>
+        </div>
+
+        <!-- Search Results -->
+        <div id="search-results" class="mt-8 hidden">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-medium text-gray-900">Search Results</h3>
+                <div class="text-sm text-gray-500">
+                    <span id="results-count">0</span> results found
+                </div>
+            </div>
+            
+            <div id="results-list" class="space-y-4"></div>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loading-state" class="mt-8 hidden">
+            <div class="text-center">
+                <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <p class="mt-2 text-gray-600">Searching...</p>
+            </div>
+        </div>
+
+        <!-- No Results -->
+        <div id="no-results" class="mt-8 hidden">
+            <div class="text-center py-12">
+                <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <h3 class="mt-2 text-sm font-medium text-gray-900">No results found</h3>
+                <p class="mt-1 text-sm text-gray-500">Try adjusting your search query or filters.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let currentSearchResults = [];
+
+    // Search functionality
+    document.getElementById('search-btn').addEventListener('click', performSearch);
+    document.getElementById('search-query').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') performSearch();
+    });
+
+    async function performSearch() {
+        const query = document.getElementById('search-query').value.trim();
+        if (!query) return;
+
+        // Show loading state
+        showLoading();
+        hideResults();
+
+        try {
+            // Get filter values
+            const filters = {
+                date_from: document.getElementById('date-from').value,
+                date_to: document.getElementById('date-to').value,
+                domain: document.getElementById('domain-filter').value,
+                has_attachment: document.getElementById('has-attachment').checked
+            };
+
+            // Perform search (simulated for demo)
+            const results = await simulateSearch(query, filters);
+            currentSearchResults = results;
+            
+            // Display results
+            displaySearchResults(results);
+            displayQualitySummary();
+            
+        } catch (error) {
+            console.error('Search failed:', error);
+            showError('Search failed: ' + error.message);
+        } finally {
+            hideLoading();
+        }
+    }
+
+    function showLoading() {
+        document.getElementById('loading-state').classList.remove('hidden');
+    }
+
+    function hideLoading() {
+        document.getElementById('loading-state').classList.add('hidden');
+    }
+
+    function hideResults() {
+        document.getElementById('search-results').classList.add('hidden');
+        document.getElementById('no-results').classList.add('hidden');
+        document.getElementById('quality-summary').classList.add('hidden');
+    }
+
+    async function simulateSearch(query, filters) {
+        // Simulate API delay
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Generate mock results
+        const results = [];
+        const resultCount = Math.floor(Math.random() * 10) + 3;
+        
+        for (let i = 0; i < resultCount; i++) {
+            results.push({
+                id: `result-${i}`,
+                email_id: `email-${i + 1}`,
+                chunk_uid: `chunk-${i + 1}`,
+                score: (0.9 - i * 0.1).toFixed(2),
+                snippet: `This is a sample snippet for result ${i + 1}. It contains relevant content that matches the query "${query}". The content includes important information that users might be looking for.`,
+                source_type: Math.random() > 0.5 ? 'email' : 'attachment',
+                domain: filters.domain || 'example.com',
+                date: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+            });
+        }
+        
+        return results.sort((a, b) => parseFloat(b.score) - parseFloat(a.score));
+    }
+
+    function displaySearchResults(results) {
+        const resultsContainer = document.getElementById('search-results');
+        const resultsList = document.getElementById('results-list');
+        const resultsCount = document.getElementById('results-count');
+        
+        resultsCount.textContent = results.length;
+        
+        resultsList.innerHTML = '';
+        results.forEach(result => {
+            const resultItem = createResultItem(result);
+            resultsList.appendChild(resultItem);
+        });
+        
+        resultsContainer.classList.remove('hidden');
+    }
+
+    function createResultItem(result) {
+        const resultItem = document.createElement('div');
+        resultItem.className = 'border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow';
+        
+        const sourceIcon = result.source_type === 'email' ? 
+            '<svg class="h-5 w-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>' :
+            '<svg class="h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a2 2 0 00-2.828-2.828z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 10l-1.586 1.586a2 2 0 102.828 2.828L10 12.828a2 2 0 00-2.828-2.828z" /></svg>';
+        
+        resultItem.innerHTML = `
+            <div class="flex items-start justify-between">
+                <div class="flex-1">
+                    <div class="flex items-center space-x-2 mb-2">
+                        ${sourceIcon}
+                        <span class="text-sm text-gray-500">${result.domain}</span>
+                        <span class="text-sm text-gray-500">•</span>
+                        <span class="text-sm text-gray-500">${result.date}</span>
+                    </div>
+                    <div class="citation-pill text-white px-3 py-1 rounded-full text-sm font-medium inline-block mb-2">
+                        Score: ${result.score}
+                    </div>
+                    <p class="text-gray-700 leading-relaxed">${result.snippet}</p>
+                </div>
+                <div class="ml-4 flex-shrink-0">
+                    <button onclick="useForDraft('${result.id}')" class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 transition-colors text-sm">
+                        Use for Draft
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        return resultItem;
+    }
+
+    function displayQualitySummary() {
+        // Simulate quality metrics for demo
+        const hitAt5 = (0.65 + Math.random() * 0.3).toFixed(2);
+        const mrrAt10 = (0.55 + Math.random() * 0.3).toFixed(2);
+        const ndcgAt10 = (0.60 + Math.random() * 0.3).toFixed(2);
+        
+        document.getElementById('hit-at-5').textContent = hitAt5;
+        document.getElementById('mrr-at-10').textContent = mrrAt10;
+        document.getElementById('ndcg-at-10').textContent = ndcgAt10;
+        
+        // Determine quality status
+        const allThresholdsMet = parseFloat(hitAt5) >= 0.65 && parseFloat(mrrAt10) >= 0.55 && parseFloat(ndcgAt10) >= 0.60;
+        const statusElement = document.getElementById('quality-status');
+        
+        if (allThresholdsMet) {
+            statusElement.textContent = 'Quality Thresholds Met';
+            statusElement.className = 'px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800';
+        } else {
+            statusElement.textContent = 'Quality Thresholds Not Met';
+            statusElement.className = 'px-3 py-1 rounded-full text-sm font-medium bg-yellow-100 text-yellow-800';
+        }
+        
+        document.getElementById('quality-summary').classList.remove('hidden');
+    }
+
+    function useForDraft(resultId) {
+        const result = currentSearchResults.find(r => r.id === resultId);
+        if (result) {
+            // Store selected result for draft page
+            localStorage.setItem('selectedCitation', JSON.stringify(result));
+            // Navigate to draft page
+            window.location.href = '/ui/draft';
+        }
+    }
+
+    function showError(message) {
+        // Simple error display
+        alert('Error: ' + message);
+    }
+</script>
+{% endblock %}

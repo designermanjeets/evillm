@@ -10,9 +10,10 @@ from fastapi.responses import JSONResponse
 import structlog
 
 from app.config.settings import get_settings
-from app.routers import health, draft, eval_router, ingestion, search_metrics, search_qa
+from app.routers import health, draft, eval_router, ingestion, search_metrics, search_qa, ui
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.tenant_isolation import TenantIsolationMiddleware
+from app.middleware.rate_limit import RateLimitMiddleware
 
 # Configure structured logging
 structlog.configure(
@@ -74,10 +75,10 @@ def create_app() -> FastAPI:
         lifespan=lifespan
     )
     
-    # Add CORS middleware
+    # Add CORS middleware with strict mode settings
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
+        allow_origins=settings.security.cors_allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -86,8 +87,69 @@ def create_app() -> FastAPI:
     # Add custom middleware
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(TenantIsolationMiddleware)
+    app.add_middleware(RateLimitMiddleware, requests_per_minute=settings.security.rate_limit_per_minute)
+    
+    # Add CSP headers middleware
+    @app.middleware("http")
+    async def add_csp_headers(request: Request, call_next):
+        """Add Content Security Policy headers."""
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = settings.security.csp
+        return response
     
     # Add exception handlers
+    from app.exceptions import SearchDependencyUnavailable, LlmDependencyUnavailable, NoEvidenceFoundError, EvalGateBlockedError
+    
+    @app.exception_handler(SearchDependencyUnavailable)
+    async def search_dependency_handler(request: Request, exc: SearchDependencyUnavailable):
+        """Handle search dependency unavailability."""
+        logger.warning("Search dependency unavailable", 
+                      service=exc.service,
+                      action=exc.action,
+                      trace_id=exc.trace_id,
+                      tenant_id=exc.tenant_id)
+        return JSONResponse(
+            status_code=503,
+            content=exc.to_dict()
+        )
+    
+    @app.exception_handler(LlmDependencyUnavailable)
+    async def llm_dependency_handler(request: Request, exc: LlmDependencyUnavailable):
+        """Handle LLM dependency unavailability."""
+        logger.warning("LLM dependency unavailable", 
+                      provider=exc.provider,
+                      trace_id=exc.trace_id,
+                      tenant_id=exc.tenant_id)
+        return JSONResponse(
+            status_code=503,
+            content=exc.to_dict()
+        )
+    
+    @app.exception_handler(NoEvidenceFoundError)
+    async def no_evidence_handler(request: Request, exc: NoEvidenceFoundError):
+        """Handle no evidence found errors."""
+        logger.warning("No evidence found", 
+                      query=exc.query,
+                      trace_id=exc.trace_id,
+                      tenant_id=exc.tenant_id)
+        return JSONResponse(
+            status_code=404,
+            content=exc.to_dict()
+        )
+    
+    @app.exception_handler(EvalGateBlockedError)
+    async def eval_gate_blocked_handler(request: Request, exc: EvalGateBlockedError):
+        """Handle evaluation gate blocked errors."""
+        logger.warning("Draft blocked by evaluation gate", 
+                      scores=exc.scores,
+                      reasons=exc.reasons,
+                      trace_id=exc.trace_id,
+                      tenant_id=exc.tenant_id)
+        return JSONResponse(
+            status_code=422,
+            content=exc.to_dict()
+        )
+    
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
         """Global exception handler."""
@@ -107,6 +169,7 @@ def create_app() -> FastAPI:
     app.include_router(ingestion.router, prefix="/ingestion", tags=["ingestion"])
     app.include_router(search_metrics.router, prefix="/search-metrics", tags=["search-metrics"])
     app.include_router(search_qa.router, prefix="/search-qa", tags=["search-qa"])
+    app.include_router(ui.router, tags=["ui"])
     
     return app
 

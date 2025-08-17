@@ -48,6 +48,7 @@ class DraftWorkflowState:
     cost_estimate: float = 0.0
     audit_trace: Optional[Dict[str, Any]] = None
     retrieval: Optional[Dict[str, Any]] = None  # EARS-AGT-4: citations patch
+    status: Optional[str] = None  # STRICT MODE: workflow status (blocked, failed, completed)
     
     def __post_init__(self):
         if self.step_results is None:
@@ -313,6 +314,11 @@ class DraftWorkflow:
                 k=max_k
             )
             
+            # STRICT MODE: Check if we have evidence
+            if not citations:
+                from app.exceptions import NoEvidenceFoundError
+                raise NoEvidenceFoundError(query, None, state.tenant_id)
+            
             # Security: Ensure all citations belong to the same tenant
             tenant_citations = [c for c in citations if hasattr(c, 'tenant_id') and c.tenant_id == state.tenant_id]
             if len(tenant_citations) != len(citations):
@@ -362,6 +368,18 @@ class DraftWorkflow:
             
         except Exception as e:
             logger.error("Retriever failed", error=str(e), tenant_id=state.tenant_id)
+            
+            # STRICT MODE: Handle specific error types
+            from app.exceptions import SearchDependencyUnavailable, NoEvidenceFoundError
+            
+            if isinstance(e, (SearchDependencyUnavailable, NoEvidenceFoundError)):
+                # Block the workflow with specific error
+                return state.patch(
+                    current_step="blocked",
+                    validation_errors=state.validation_errors + [f"Retriever blocked: {str(e)}"],
+                    status="blocked"
+                )
+            
             return state.patch(
                 validation_errors=state.validation_errors + [f"Retriever error: {str(e)}"]
             )
@@ -515,7 +533,8 @@ class DraftWorkflow:
                 return state.patch(
                     current_step="completed",
                     step_results=step_results,
-                    validation_errors=validation_errors
+                    validation_errors=validation_errors,
+                    status="completed"
                 )
             else:
                 # Block the draft - fail-closed policy
@@ -527,7 +546,8 @@ class DraftWorkflow:
                 return state.patch(
                     current_step="blocked",
                     step_results=step_results,
-                    validation_errors=validation_errors
+                    validation_errors=validation_errors,
+                    status="blocked"
                 )
             
         except Exception as e:

@@ -78,6 +78,8 @@ class RetrieverAdapter:
         filters: Optional[Dict[str, Any]] = None
     ) -> List[CitationItem]:
         """Retrieve top-k results with citations using hybrid search."""
+        from app.exceptions import SearchDependencyUnavailable, NoEvidenceFoundError
+        
         query_id = str(uuid.uuid4())
         start_time = time.time()
         
@@ -85,14 +87,28 @@ class RetrieverAdapter:
             # Ensure services are initialized
             await self._ensure_services_initialized()
             
+            # STRICT MODE: Check required dependencies
+            strict_mode = self.config.get("security.strict_mode", True)
+            require_bm25 = self.config.get("search.require_bm25", True)
+            require_vector = self.config.get("search.require_vector", True)
+            
+            if strict_mode:
+                # Check BM25 availability if required
+                if require_bm25 and not self.bm25_service.client:
+                    raise SearchDependencyUnavailable("bm25", "search", query_id, tenant_id)
+                
+                # Check vector availability if required
+                if require_vector and self.vector_service._client["type"] == "stub":
+                    raise SearchDependencyUnavailable("vector", "search", query_id, tenant_id)
+            
             # Try hybrid search first if available
             if self._has_hybrid_search():
                 results = await self._hybrid_search(tenant_id, query, k, filters, query_id, start_time)
                 if results:
                     return results
             
-            # Fallback to SQL text search
-            if self.fallback_enabled:
+            # STRICT MODE: Only allow fallback if explicitly enabled
+            if self.fallback_enabled and not strict_mode:
                 results = await self._sql_text_search(tenant_id, query, k, filters)
                 
                 # Record fallback search metrics
@@ -104,7 +120,11 @@ class RetrieverAdapter:
                 
                 return results
             
-            # No results available
+            # STRICT MODE: No results available - raise error
+            if strict_mode:
+                raise NoEvidenceFoundError(query, query_id, tenant_id)
+            
+            # Non-strict mode: return empty results
             logger.warning("No retrieval services available", tenant_id=tenant_id)
             
             # Record failed search metrics

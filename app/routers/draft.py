@@ -131,3 +131,63 @@ async def get_draft_status(
         "tenant_id": tenant_id,
         "timestamp": datetime.utcnow().isoformat(),
     }
+
+
+@router.get("/{draft_id}/audit")
+async def get_draft_audit(
+    draft_id: str,
+    tenant_id: str = Depends(get_tenant_id)
+) -> Dict[str, Any]:
+    """Get audit trace for a specific draft."""
+    try:
+        logger.info(
+            "Audit trace requested",
+            tenant_id=tenant_id,
+            draft_id=draft_id
+        )
+        
+        # TODO: Retrieve actual audit trace from storage
+        # For now, return a mock audit trace
+        
+        audit_trace = {
+            "workflow_id": f"workflow_{draft_id}",
+            "tenant_id": tenant_id,
+            "draft_id": draft_id,
+            "start_time": datetime.now().isoformat(),
+            "end_time": datetime.now().isoformat(),
+            "total_duration_ms": 2500.0,
+            "step_timings": [
+                {"step_name": "coordinator", "duration_ms": 150},
+                {"step_name": "analyzer", "duration_ms": 200},
+                {"step_name": "retriever", "duration_ms": 800},
+                {"step_name": "numeric_verifier", "duration_ms": 120},
+                {"step_name": "drafter", "duration_ms": 2500},
+                {"step_name": "compliance_guard", "duration_ms": 180},
+                {"step_name": "eval_gate", "duration_ms": 300}
+            ],
+            "performance_metrics": {
+                "drafts_started_total": 1,
+                "drafts_failed_eval_total": 0,
+                "retrieval_hit_k": 0.85
+            },
+            "final_state": {
+                "status": "completed",
+                "tokens_used": 150,
+                "citations_used": 3
+            }
+        }
+        
+        return audit_trace
+        
+    except Exception as exc:
+        logger.error(
+            "Failed to retrieve audit trace",
+            tenant_id=tenant_id,
+            draft_id=draft_id,
+            exc_info=exc
+        )
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve audit trace"
+        )

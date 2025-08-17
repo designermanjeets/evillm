@@ -91,6 +91,14 @@ class LLMClient:
     
     def _init_stub_client(self):
         """Initialize stub client for testing."""
+        # STRICT MODE: Check if stub is allowed
+        allow_stub = self.config.get("llm.allow_stub", False)
+        strict_mode = self.config.get("security.strict_mode", True)
+        
+        if strict_mode and not allow_stub:
+            from app.exceptions import LlmDependencyUnavailable
+            raise LlmDependencyUnavailable("stub", None, None)
+        
         logger.info("Using stub LLM client")
         return {"type": "stub", "client": None}
     

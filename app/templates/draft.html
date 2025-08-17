@@ -1,0 +1,418 @@
+{% extends "base.html" %}
+
+{% block title %}Generate Draft{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+    <div class="bg-white shadow-lg rounded-lg p-6">
+        <h1 class="text-3xl font-bold text-gray-900 mb-6">Generate Draft</h1>
+        
+        <!-- Draft Interface -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Left Column: Input and Controls -->
+            <div class="space-y-6">
+                <!-- Prompt Input -->
+                <div>
+                    <label for="draft-prompt" class="block text-sm font-medium text-gray-700 mb-2">Draft Prompt</label>
+                    <textarea id="draft-prompt" rows="4" placeholder="Enter your draft prompt..." 
+                              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"></textarea>
+                </div>
+
+                <!-- Citation Toggle -->
+                <div class="flex items-center space-x-3">
+                    <input type="checkbox" id="use-citations" checked class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                    <label for="use-citations" class="text-sm font-medium text-gray-700">Use citations from search results</label>
+                </div>
+
+                <!-- Selected Citation Display -->
+                <div id="selected-citation" class="p-4 bg-blue-50 border border-blue-200 rounded-lg hidden">
+                    <h4 class="text-sm font-medium text-blue-900 mb-2">Selected Citation</h4>
+                    <div id="citation-content" class="text-sm text-blue-800"></div>
+                </div>
+
+                <!-- Generate Button -->
+                <button id="generate-btn" class="w-full bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 transition-colors">
+                    Generate Draft
+                </button>
+            </div>
+
+            <!-- Right Column: Results and Streaming -->
+            <div class="space-y-6">
+                <!-- Step Timeline -->
+                <div>
+                    <h3 class="text-lg font-medium text-gray-900 mb-3">Workflow Steps</h3>
+                    <div id="step-timeline" class="space-y-2">
+                        <div class="step-item" data-step="coordinator">
+                            <div class="flex items-center space-x-3">
+                                <div class="step-indicator bg-gray-200 text-gray-600">1</div>
+                                <span class="text-sm text-gray-600">Coordinator</span>
+                                <span class="step-status text-xs text-gray-400">Pending</span>
+                            </div>
+                        </div>
+                        <div class="step-item" data-step="analyzer">
+                            <div class="flex items-center space-x-3">
+                                <div class="step-indicator bg-gray-200 text-gray-600">2</div>
+                                <span class="text-sm text-gray-600">Analyzer</span>
+                                <span class="step-status text-xs text-gray-400">Pending</span>
+                            </div>
+                        </div>
+                        <div class="step-item" data-step="retriever">
+                            <div class="flex items-center space-x-3">
+                                <div class="step-indicator bg-gray-200 text-gray-600">3</div>
+                                <span class="text-sm text-gray-600">Retriever</span>
+                                <span class="step-status text-xs text-gray-400">Pending</span>
+                            </div>
+                        </div>
+                        <div class="step-item" data-step="numeric_verifier">
+                            <div class="flex items-center space-x-3">
+                                <div class="step-indicator bg-gray-200 text-gray-600">4</div>
+                                <span class="text-sm text-gray-600">Numeric Verifier</span>
+                                <span class="step-status text-xs text-gray-400">Pending</span>
+                            </div>
+                        </div>
+                        <div class="step-item" data-step="drafter">
+                            <div class="flex items-center space-x-3">
+                                <div class="step-indicator bg-gray-200 text-gray-600">5</div>
+                                <span class="text-sm text-gray-600">Drafter</span>
+                                <span class="step-status text-xs text-gray-400">Pending</span>
+                            </div>
+                        </div>
+                        <div class="step-item" data-step="compliance_guard">
+                            <div class="flex items-center space-x-3">
+                                <div class="step-indicator bg-gray-200 text-gray-600">6</div>
+                                <span class="text-sm text-gray-600">Compliance Guard</span>
+                                <span class="step-status text-xs text-gray-400">Pending</span>
+                            </div>
+                        </div>
+                        <div class="step-item" data-step="eval_gate">
+                            <div class="flex items-center space-x-3">
+                                <div class="step-indicator bg-gray-200 text-gray-600">7</div>
+                                <span class="text-sm text-gray-600">Evaluation Gate</span>
+                                <span class="step-status text-xs text-gray-400">Pending</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Streaming Output -->
+                <div>
+                    <h3 class="text-lg font-medium text-gray-900 mb-3">Generated Draft</h3>
+                    <div id="streaming-output" class="border border-gray-200 rounded-lg p-4 min-h-[200px] bg-gray-50">
+                        <p class="text-gray-500 text-center">Draft will appear here as it's generated...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Blocking Banner -->
+        <div id="blocking-banner" class="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg hidden">
+            <div class="flex items-center space-x-3">
+                <svg class="h-6 w-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+                <div>
+                    <h4 class="text-lg font-medium text-red-800">Draft Blocked</h4>
+                    <p id="blocking-reason" class="text-sm text-red-700"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Audit Trace Viewer -->
+        <div id="audit-trace" class="mt-8 hidden">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-medium text-gray-900">Audit Trace</h3>
+                <button id="download-trace" class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 transition-colors text-sm">
+                    Download Trace
+                </button>
+            </div>
+            <div id="trace-content" class="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-sm overflow-auto max-h-96"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Step Indicator Styles -->
+<style>
+    .step-indicator {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    
+    .step-item.active .step-indicator {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+    }
+    
+    .step-item.completed .step-indicator {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+    }
+    
+    .step-item.blocked .step-indicator {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let currentDraft = '';
+    let isGenerating = false;
+
+    // Initialize page
+    document.addEventListener('DOMContentLoaded', function() {
+        // Check for selected citation from search page
+        const selectedCitation = localStorage.getItem('selectedCitation');
+        if (selectedCitation) {
+            const citation = JSON.parse(selectedCitation);
+            displaySelectedCitation(citation);
+        }
+    });
+
+    function displaySelectedCitation(citation) {
+        const citationContainer = document.getElementById('selected-citation');
+        const citationContent = document.getElementById('citation-content');
+        
+        citationContent.innerHTML = `
+            <strong>Score:</strong> ${citation.score}<br>
+            <strong>Source:</strong> ${citation.source_type}<br>
+            <strong>Snippet:</strong> ${citation.snippet.substring(0, 100)}...
+        `;
+        
+        citationContainer.classList.remove('hidden');
+    }
+
+    // Draft generation
+    document.getElementById('generate-btn').addEventListener('click', generateDraft);
+
+    async function generateDraft() {
+        if (isGenerating) return;
+        
+        const prompt = document.getElementById('draft-prompt').value.trim();
+        if (!prompt) {
+            alert('Please enter a draft prompt');
+            return;
+        }
+
+        isGenerating = true;
+        document.getElementById('generate-btn').disabled = true;
+        document.getElementById('generate-btn').textContent = 'Generating...';
+        
+        // Reset UI
+        resetUI();
+        
+        try {
+            // Simulate workflow execution with streaming
+            await simulateWorkflowExecution(prompt);
+            
+        } catch (error) {
+            console.error('Draft generation failed:', error);
+            showError('Draft generation failed: ' + error.message);
+        } finally {
+            isGenerating = false;
+            document.getElementById('generate-btn').disabled = false;
+            document.getElementById('generate-btn').textContent = 'Generate Draft';
+        }
+    }
+
+    function resetUI() {
+        // Reset step timeline
+        document.querySelectorAll('.step-item').forEach(item => {
+            item.classList.remove('active', 'completed', 'blocked');
+            const status = item.querySelector('.step-status');
+            status.textContent = 'Pending';
+            status.className = 'step-status text-xs text-gray-400';
+        });
+        
+        // Reset streaming output
+        document.getElementById('streaming-output').innerHTML = '<p class="text-gray-500 text-center">Draft will appear here as it\'s generated...</p>';
+        
+        // Hide blocking banner and audit trace
+        document.getElementById('blocking-banner').classList.add('hidden');
+        document.getElementById('audit-trace').classList.add('hidden');
+        
+        currentDraft = '';
+    }
+
+    async function simulateWorkflowExecution(prompt) {
+        const steps = ['coordinator', 'analyzer', 'retriever', 'numeric_verifier', 'drafter', 'compliance_guard', 'eval_gate'];
+        
+        for (let i = 0; i < steps.length; i++) {
+            const step = steps[i];
+            
+            // Activate step
+            activateStep(step);
+            await simulateStepExecution(step);
+            
+            // Check if workflow should continue
+            if (step === 'retriever') {
+                // Simulate retriever step
+                const hasEvidence = Math.random() > 0.2; // 80% chance of success
+                if (!hasEvidence) {
+                    blockWorkflow('retriever', 'No evidence found for the query');
+                    return;
+                }
+            }
+            
+            if (step === 'eval_gate') {
+                // Simulate evaluation
+                const evalPassed = Math.random() > 0.3; // 70% chance of passing
+                if (!evalPassed) {
+                    blockWorkflow('eval_gate', 'Draft failed evaluation: Grounding score below threshold');
+                    return;
+                }
+            }
+            
+            // Complete step
+            completeStep(step);
+            
+            // Add delay between steps
+            await new Promise(resolve => setTimeout(resolve, 800));
+        }
+        
+        // Workflow completed successfully
+        showAuditTrace();
+    }
+
+    function activateStep(stepName) {
+        const stepItem = document.querySelector(`[data-step="${stepName}"]`);
+        if (stepItem) {
+            stepItem.classList.add('active');
+            const status = stepItem.querySelector('.step-status');
+            status.textContent = 'Running...';
+            status.className = 'step-status text-xs text-blue-600 font-medium';
+        }
+    }
+
+    function completeStep(stepName) {
+        const stepItem = document.querySelector(`[data-step="${stepName}"]`);
+        if (stepItem) {
+            stepItem.classList.remove('active');
+            stepItem.classList.add('completed');
+            const status = stepItem.querySelector('.step-status');
+            status.textContent = 'Completed';
+            status.className = 'step-status text-xs text-green-600 font-medium';
+        }
+    }
+
+    function blockWorkflow(stepName, reason) {
+        const stepItem = document.querySelector(`[data-step="${stepName}"]`);
+        if (stepItem) {
+            stepItem.classList.remove('active');
+            stepItem.classList.add('blocked');
+            const status = stepItem.querySelector('.step-status');
+            status.textContent = 'Blocked';
+            status.className = 'step-status text-xs text-red-600 font-medium';
+        }
+        
+        // Show blocking banner
+        document.getElementById('blocking-reason').textContent = reason;
+        document.getElementById('blocking-banner').classList.remove('hidden');
+        
+        // Show audit trace even for blocked workflows
+        showAuditTrace();
+    }
+
+    async function simulateStepExecution(stepName) {
+        // Simulate different step behaviors
+        if (stepName === 'drafter') {
+            // Simulate streaming draft generation
+            await simulateDraftStreaming();
+        }
+    }
+
+    async function simulateDraftStreaming() {
+        const streamingOutput = document.getElementById('streaming-output');
+        const sampleDraft = `Dear Team,
+
+Thank you for your inquiry regarding the project timeline. Based on the available documentation and recent updates, I can provide you with the following information:
+
+The project has been progressing according to the revised schedule that was approved last month. Our development team has completed 75% of the planned milestones, and we are currently on track to meet the Q4 delivery target.
+
+Key highlights from the recent progress report include:
+• Frontend development: 90% complete
+• Backend API integration: 80% complete
+• Testing and quality assurance: 60% complete
+
+We have identified a few minor challenges that may require additional resources, but these are not expected to impact the overall timeline significantly.
+
+Please let me know if you need any additional details or have specific questions about any aspect of the project.
+
+Best regards,
+Project Manager`;
+
+        streamingOutput.innerHTML = '';
+        currentDraft = '';
+        
+        for (let i = 0; i < sampleDraft.length; i++) {
+            currentDraft += sampleDraft[i];
+            streamingOutput.innerHTML = currentDraft.replace(/\n/g, '<br>');
+            
+            // Add small delay to simulate streaming
+            await new Promise(resolve => setTimeout(resolve, 20));
+        }
+    }
+
+    function showAuditTrace() {
+        // Generate mock audit trace
+        const auditTrace = {
+            workflow_id: `workflow_${Date.now()}`,
+            tenant_id: '{{ tenant_id }}',
+            start_time: new Date().toISOString(),
+            end_time: new Date().toISOString(),
+            total_duration_ms: Math.floor(Math.random() * 5000) + 2000,
+            step_timings: [
+                { step_name: 'coordinator', duration_ms: 150 },
+                { step_name: 'analyzer', duration_ms: 200 },
+                { step_name: 'retriever', duration_ms: 800 },
+                { step_name: 'numeric_verifier', duration_ms: 120 },
+                { step_name: 'drafter', duration_ms: 2500 },
+                { step_name: 'compliance_guard', duration_ms: 180 },
+                { step_name: 'eval_gate', duration_ms: 300 }
+            ],
+            performance_metrics: {
+                drafts_started_total: 1,
+                drafts_failed_eval_total: 0,
+                retrieval_hit_k: 0.85
+            },
+            final_state: {
+                status: 'completed',
+                tokens_used: currentDraft.length,
+                citations_used: 3
+            }
+        };
+        
+        // Display audit trace
+        const traceContent = document.getElementById('trace-content');
+        traceContent.textContent = JSON.stringify(auditTrace, null, 2);
+        
+        document.getElementById('audit-trace').classList.remove('hidden');
+        
+        // Setup download functionality
+        setupDownloadTrace(auditTrace);
+    }
+
+    function setupDownloadTrace(auditTrace) {
+        document.getElementById('download-trace').addEventListener('click', function() {
+            const dataStr = JSON.stringify(auditTrace, null, 2);
+            const dataBlob = new Blob([dataStr], { type: 'application/json' });
+            
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(dataBlob);
+            link.download = `audit_trace_${auditTrace.workflow_id}.json`;
+            link.click();
+        });
+    }
+
+    function showError(message) {
+        // Simple error display
+        alert('Error: ' + message);
+    }
+</script>
+{% endblock %}

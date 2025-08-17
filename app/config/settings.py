@@ -72,6 +72,10 @@ class SearchSettings(BaseSettings):
     quality_thresholds_mrr_at_10: float = Field(default=0.55, env="SEARCH_QUALITY_THRESHOLD_MRR_AT_10")
     quality_thresholds_ndcg_at_10: float = Field(default=0.60, env="SEARCH_QUALITY_THRESHOLD_NDCG_AT_10")
     
+    # Strict mode requirements
+    require_bm25: bool = Field(default=True, env="SEARCH_REQUIRE_BM25")
+    require_vector: bool = Field(default=True, env="SEARCH_REQUIRE_VECTOR")
+    
     @validator("vector_store")
     def validate_vector_store(cls, v: str) -> str:
         """Validate vector store provider."""
@@ -98,6 +102,9 @@ class LLMSettings(BaseSettings):
     anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
     anthropic_model: str = Field(default="claude-3-sonnet-20240229", env="ANTHROPIC_MODEL")
     
+    # Strict mode settings
+    allow_stub: bool = Field(default=False, env="LLM_ALLOW_STUB")
+    
     max_tokens: int = Field(default=4000, env="LLM_MAX_TOKENS")
     temperature: float = Field(default=0.1, env="LLM_TEMPERATURE")
     
@@ -123,6 +130,13 @@ class SecuritySettings(BaseSettings):
     # Rate limiting
     rate_limit_requests: int = Field(default=100, env="RATE_LIMIT_REQUESTS")
     rate_limit_window: int = Field(default=3600, env="RATE_LIMIT_WINDOW")  # seconds
+    
+    # Strict mode settings
+    strict_mode: bool = Field(default=True, env="SECURITY_STRICT_MODE")
+    redact_pii_in_logs: bool = Field(default=True, env="SECURITY_REDACT_PII_IN_LOGS")
+    cors_allowed_origins: List[str] = Field(default=["http://localhost:3000", "http://127.0.0.1:3000"], env="CORS_ALLOWED_ORIGINS")
+    csp: str = Field(default="default-src 'self'; img-src 'self' data:; connect-src 'self' http://localhost:*", env="CSP")
+    rate_limit_per_minute: int = Field(default=60, env="RATE_LIMIT_PER_MINUTE")
     
     @validator("secret_key")
     def validate_secret_key(cls, v: str) -> str:
